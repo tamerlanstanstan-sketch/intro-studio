@@ -11,7 +11,11 @@
   function lsGet(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
   function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
-  var configured = !!(window.firebase && CFG.apiKey && CFG.projectId && String(CFG.apiKey).indexOf('ВСТАВЬТЕ') !== 0);
+  var cfgFilled = !!(CFG.apiKey && CFG.projectId && String(CFG.apiKey).indexOf('ВСТАВЬТЕ') !== 0 && String(CFG.projectId).indexOf('ВСТАВЬТЕ') !== 0);
+  var configured = !!(window.firebase && cfgFilled);
+  var notConfMsg = cfgFilled
+    ? 'Не загрузились скрипты Firebase. Проверьте интернет, отключите блокировщик рекламы и обновите страницу.'
+    : 'Сайт ещё не подключён к Firebase: откройте js/firebase-config.js и вставьте настройки проекта (шаги в README.md).';
   var auth = null, db = null, FV = null;
   if (configured) {
     try { firebase.initializeApp(CFG); auth = firebase.auth(); db = firebase.firestore(); FV = firebase.firestore.FieldValue; }
@@ -52,14 +56,22 @@
       'auth/email-already-in-use': 'Эта почта уже зарегистрирована. Нажмите «Войти».',
       'auth/invalid-email': 'Проверьте почту: нужен адрес вида name@mail.ru.',
       'auth/weak-password': 'Пароль слишком простой. Нужно минимум 8 символов.',
+      'auth/password-does-not-meet-requirements': 'Пароль не подходит под требования проекта Firebase (например, нужны заглавная буква и цифра).',
       'auth/invalid-credential': 'Неверная почта или пароль.',
       'auth/wrong-password': 'Неверная почта или пароль.',
       'auth/user-not-found': 'Неверная почта или пароль.',
       'auth/too-many-requests': 'Слишком много попыток. Подождите немного и повторите.',
-      'auth/network-request-failed': 'Нет связи с сервером. Проверьте интернет.',
-      'auth/operation-not-allowed': 'Вход по почте и паролю не включён в настройках Firebase. Смотрите README.'
+      'auth/network-request-failed': 'Нет связи с сервером. Проверьте интернет и отключите VPN или блокировщик.',
+      'auth/operation-not-allowed': 'В Firebase не включён вход по почте и паролю: Authentication -> Способ входа -> Электронная почта/пароль -> Включить.',
+      'auth/unauthorized-domain': 'Адрес сайта не добавлен в Firebase: Authentication -> Настройки -> Авторизованные домены -> добавьте ВАШ_ЛОГИН.github.io.',
+      'auth/invalid-api-key': 'Неверный apiKey в js/firebase-config.js. Скопируйте настройки из консоли Firebase заново.',
+      'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'Неверный apiKey в js/firebase-config.js. Скопируйте настройки из консоли Firebase заново.',
+      'auth/configuration-not-found': 'В проекте Firebase не запущена служба Authentication: откройте Authentication и нажмите «Начать».',
+      'auth/operation-not-supported-in-this-environment': 'Сайт открыт как файл с компьютера. Откройте его по адресу https:// (через GitHub Pages).',
+      'auth/internal-error': 'Внутренняя ошибка Firebase. Проверьте настройки проекта и повторите.'
     };
-    return m[e && e.code] || 'Не получилось. Попробуйте ещё раз.';
+    var code = (e && e.code) || '';
+    return (m[code] || 'Не получилось зарегистрироваться или войти.') + (code ? ' (' + code + ')' : (e && e.message ? ' (' + e.message + ')' : ''));
   }
   function dbMsg(e, fallback) {
     if (e && e.code === 'permission-denied') return 'Нет прав на это действие. Подтвердите почту или проверьте, что вы не заблокированы.';
@@ -81,7 +93,8 @@
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !overlay.hidden) close(); });
 
   function openNotConfigured() {
-    show('<h2 id="dlg-title">Сайт ещё не подключён к базе</h2><p>Регистрация и вход заработают после настройки Firebase. Шаги описаны в файле README.md в папке сайта.</p><div class="row"><button type="button" id="d-close" class="primary">Понятно</button></div>');
+    show('<h2 id="dlg-title">Сайт ещё не подключён к базе</h2><p id="d-msg"></p><div class="row"><button type="button" id="d-close" class="primary">Понятно</button></div>');
+    $('d-msg').textContent = notConfMsg + ' Шаги описаны в файле README.md.';
     $('d-close').onclick = close;
   }
   function openRegister() {
@@ -106,7 +119,7 @@
       try {
         var cred = await auth.createUserWithEmailAndPassword(email, pw);
         try { await cred.user.updateProfile({ displayName: name }); } catch (x) {}
-        try { await db.collection('users').doc(cred.user.uid).set({ name: name, createdAt: FV.serverTimestamp() }); } catch (x) {}
+        try { await db.collection('users').doc(cred.user.uid).set({ name: name, createdAt: FV.serverTimestamp() }); } catch (x) { onErr(x); }
         try { await cred.user.sendEmailVerification(); } catch (x) {}
         me = auth.currentUser;
         openVerifyInfo(true);
@@ -196,7 +209,7 @@
   function onErr(e) {
     if (S.dbErr) return; S.dbErr = true;
     var box = $('setup'); box.hidden = false;
-    box.textContent = 'Нет доступа к базе данных. Проверьте, что в Firebase созданы Firestore и правила из файла firestore.rules (подробности в README.md).';
+    box.textContent = 'Нет доступа к базе данных' + (e && e.code ? ' (' + e.code + ')' : '') + '. Проверьте, что в Firebase создан Firestore и опубликованы правила из файла firestore.rules (подробности в README.md).';
     if (window.console) console.error(e);
   }
   function stopSubs() { S.subs.forEach(function (u) { try { u(); } catch (e) {} }); S.subs = []; S.users = {}; S.verified = {}; S.banned = {}; S.posts = []; S.likes = []; S.comments = []; S.msgs = []; S.reports = []; S.peer = null; S.modTried = false; S.reportsOn = false; }
@@ -204,7 +217,7 @@
     var uid = me.uid, est = { serverTimestamps: 'estimate' };
     S.seen = lsGet('seen-' + uid, {}); S.reported = lsGet('rep-' + uid, {});
     S.subs.push(db.collection('users').onSnapshot(function (s) {
-      S.users = {}; s.forEach(function (d) { S.users[d.id] = d.data(); }); renderAll();
+      S.users = {}; s.forEach(function (d) { var x = d.data(est); S.users[d.id] = { name: x.name, ts: x.createdAt ? toMs(x.createdAt) : 0 }; }); renderAll();
     }, onErr));
     S.subs.push(db.collection('verified').onSnapshot(function (s) {
       S.verified = {}; s.forEach(function (d) { S.verified[d.id] = 1; });
@@ -212,7 +225,7 @@
       renderAll();
     }, onErr));
     S.subs.push(db.collection('banned').onSnapshot(function (s) {
-      S.banned = {}; s.forEach(function (d) { S.banned[d.id] = 1; }); renderAll();
+      S.banned = {}; s.forEach(function (d) { S.banned[d.id] = 1; }); $('banned').hidden = !(me && S.banned[me.uid]); renderAll();
     }, onErr));
     S.subs.push(db.collection('posts').orderBy('ts', 'desc').limit(100).onSnapshot(function (s) {
       S.posts = []; s.forEach(function (d) { var x = d.data(est); S.posts.push({ id: d.id, uid: x.uid, text: x.text, ts: toMs(x.ts) }); }); renderFeed(); renderMod();
@@ -251,6 +264,7 @@
     if (on && !started) { started = true; startSubs(); ensureProfile(); }
     if (!on && started) { started = false; stopSubs(); }
     if (on && started && isMod() && !S.reportsOn) { stopSubs(); startSubs(); } /* модератор подтвердил почту после входа */
+    $('banned').hidden = !(on && me && isBanned(me.uid));
     setStatus(); renderAll();
   }
   if (configured) {
@@ -258,19 +272,30 @@
   } else {
     afterAuth();
     var box = $('setup'); box.hidden = false;
-    box.textContent = 'Сайт ещё не подключён к Firebase: откройте js/firebase-config.js и вставьте настройки проекта (шаги в README.md). До этого работает только видео-интро.';
+    box.textContent = notConfMsg + ' До этого работает только видео-интро.';
+  }
+  if (location.protocol === 'file:') {
+    var fb = $('setup'); fb.hidden = false;
+    fb.textContent = 'Страница открыта как файл с компьютера, поэтому вход и база не работают. Выложите сайт на GitHub Pages и откройте его по адресу https://...';
   }
 
   /* ---------- список аккаунтов ---------- */
-  var listEl = $('acc-list'), countEl = $('acc-count');
+  var listEl = $('acc-list'), countEl = $('acc-count'), accQ = $('acc-search');
+  accQ.addEventListener('input', renderAccounts);
   function renderAccounts() {
+    if (!listEl) return;
     listEl.textContent = '';
-    var ids = Object.keys(S.users);
     if (!configured || !me) {
+      accQ.hidden = true;
       listEl.appendChild(el('li', 'empty', configured ? 'Список аккаунтов виден после входа.' : 'Список аккаунтов появится после настройки сайта.')); countEl.textContent = ''; return;
     }
-    ids.sort(function (a, b) { return nameOf(a).localeCompare(nameOf(b), 'ru'); });
-    countEl.textContent = ids.length ? '· ' + ids.length : '';
+    accQ.hidden = !isMod();
+    var q = isMod() ? accQ.value.trim().toLowerCase() : '';
+    var ids = Object.keys(S.users).filter(function (id) { return !q || nameOf(id).toLowerCase().indexOf(q) !== -1; });
+    ids.sort(function (a, b) { return (S.users[b].ts || 0) - (S.users[a].ts || 0); });
+    ids = ids.slice(0, 5);
+    countEl.textContent = q ? '· найдено' : '· последние 5';
+    if (!ids.length) listEl.appendChild(el('li', 'empty', q ? 'Никого не найдено.' : 'Пока нет аккаунтов.'));
     ids.forEach(function (id) {
       var li = el('li'); li.appendChild(el('span', 'nm', nameOf(id)));
       if (isVer(id)) li.appendChild(badge());
@@ -464,18 +489,33 @@
     var c = $('dm-count'); c.textContent = ''; if (total) { c.className = 'cnt'; c.textContent = total; } else c.className = '';
     renderContacts();
   }
+  var dmQ = $('dm-search');
+  dmQ.addEventListener('input', renderContacts);
+  function lastTs(id) { var t = 0; S.msgs.forEach(function (m) { if ((m.from === id || m.to === id) && m.ts > t) t = m.ts; }); return t; }
+  function contactBtn(id) {
+    var b = el('button', 'cbtn' + (S.peer === id ? ' on' : '')); b.type = 'button'; b.setAttribute('aria-pressed', S.peer === id ? 'true' : 'false');
+    b.appendChild(el('span', null, nameOf(id))); if (isVer(id)) b.appendChild(badge());
+    var un = unreadFor(id); if (un) b.appendChild(el('span', 'cnt', String(un)));
+    b.onclick = function () { S.peer = id; $('dm-err').textContent = ''; renderContacts(); renderThread(); };
+    return b;
+  }
   function renderContacts() {
     var box = $('contacts'); if (!me) return; box.textContent = '';
+    var q = dmQ.value.trim().toLowerCase();
     var others = Object.keys(S.users).filter(function (id) { return id !== me.uid; });
-    if (!others.length) { box.appendChild(el('p', 'cmuted', 'Пока нет других участников. Когда кто-то зарегистрируется, он появится здесь.')); return; }
-    others.sort(function (a, b) { return nameOf(a).localeCompare(nameOf(b), 'ru'); });
-    others.forEach(function (id) {
-      var b = el('button', 'cbtn' + (S.peer === id ? ' on' : '')); b.type = 'button'; b.setAttribute('aria-pressed', S.peer === id ? 'true' : 'false');
-      b.appendChild(el('span', null, nameOf(id))); if (isVer(id)) b.appendChild(badge());
-      var un = unreadFor(id); if (un) b.appendChild(el('span', 'cnt', String(un)));
-      b.onclick = function () { S.peer = id; $('dm-err').textContent = ''; renderContacts(); renderThread(); };
-      box.appendChild(b);
-    });
+    var chats = others.filter(function (id) { return lastTs(id) > 0; }).sort(function (a, b) { return lastTs(b) - lastTs(a); });
+    if (!q) {
+      if (!others.length) { box.appendChild(el('p', 'cmuted', 'Пока нет других участников. Когда кто-то зарегистрируется, он появится здесь.')); return; }
+      if (!chats.length) { box.appendChild(el('p', 'cmuted', 'Чатов пока нет. Найдите пользователя через поиск выше и напишите ему.')); return; }
+      chats.forEach(function (id) { box.appendChild(contactBtn(id)); });
+      return;
+    }
+    function hit(id) { return nameOf(id).toLowerCase().indexOf(q) !== -1; }
+    var inChats = chats.filter(hit);
+    var people = others.filter(function (id) { return hit(id) && chats.indexOf(id) === -1; }).sort(function (a, b) { return nameOf(a).localeCompare(nameOf(b), 'ru'); });
+    if (!inChats.length && !people.length) { box.appendChild(el('p', 'cmuted', 'Никого не найдено.')); return; }
+    if (inChats.length) { box.appendChild(el('p', 'lbl', 'Чаты')); inChats.forEach(function (id) { box.appendChild(contactBtn(id)); }); }
+    if (people.length) { box.appendChild(el('p', 'lbl', 'Пользователи')); people.slice(0, 20).forEach(function (id) { box.appendChild(contactBtn(id)); }); }
   }
   function renderThread() {
     if (!me) return;

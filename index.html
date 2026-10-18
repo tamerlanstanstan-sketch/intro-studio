@@ -52,6 +52,7 @@
     </div>
     <div id="pane-dm" hidden>
       <p class="cmuted">Сообщения видите только вы и собеседник. Не отправляйте пароли и платёжные данные.</p>
+      <input type="search" id="dm-search" class="dmsearch" maxlength="30" autocomplete="off" placeholder="Поиск чатов и пользователей" aria-label="Поиск чатов и пользователей">
       <div class="contacts" id="contacts"></div>
       <div class="thread" id="thread" aria-live="polite"></div>
       <form class="dmform" id="dm-form" hidden novalidate>
@@ -65,8 +66,10 @@
   <p class="note" id="comm-lock">Лента и личные сообщения откроются после входа в аккаунт.</p>
   <section class="accounts" aria-label="Аккаунты">
     <h3>Аккаунты <span id="acc-count"></span></h3>
+    <input type="search" id="acc-search" class="dmsearch" maxlength="30" autocomplete="off" placeholder="Найти аккаунт по имени" aria-label="Найти аккаунт по имени" hidden>
     <ul class="acc-list" id="acc-list"><li class="empty">Загрузка…</li></ul>
   </section>
+  <div class="banned" id="banned" role="alertdialog" aria-live="assertive" hidden><p>Вы заблокированы</p></div>
   <div class="authbar" id="authbar">
     <p class="astatus" id="auth-status">Загрузка…</p>
     <div class="barbtns">
@@ -87,4 +90,3 @@
 <script src="firebase-config.js"></script>
 <script src="app.js"></script>
 </body>
-</html>
