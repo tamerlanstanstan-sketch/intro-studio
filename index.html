@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#05070a">
+<title>Интро Студия</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500&family=Unbounded:wght@500;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><h1>Интро Студия</h1><p>Анимированное интро, лента, лайки и личные сообщения.</p></header>
+  <h2 class="sh">Интро</h2>
+  <div class="stage" id="stage">
+    <canvas id="gl"></canvas>
+    <div class="vignette"></div>
+    <div class="sweep" id="sweep"></div>
+    <div class="copy" id="copy">
+      <div class="scene" data-i="0"><div class="kicker" data-split>Добро пожаловать</div><h2 class="title big" data-split data-name>Твой канал</h2></div>
+      <div class="scene" data-i="1"><div class="kicker" data-split>О чём мы</div><h2 class="title" data-split>Идеи. Истории. Эмоции.</h2></div>
+      <div class="scene" data-i="2"><div class="kicker" data-split>Каждую неделю</div><h2 class="title" data-split>Новое видео по пятницам</h2></div>
+      <div class="scene" data-i="3"><div class="kicker" data-split>Не пропусти</div><h2 class="title big" data-split>Подписывайся</h2><div class="sub fade" data-name>Твой канал</div></div>
+    </div>
+    <div class="bars" id="bars"><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i></div>
+  </div>
+  <div class="controls">
+    <button id="replay" type="button">С начала</button>
+    <button id="download" type="button" hidden>Скачать</button>
+  </div>
+  <p class="note">Интро идёт по кругу, около 18 секунд. Кнопка «Скачать» записывает один цикл в видеофайл в реальном времени (оставьте вкладку открытой). Когда запись закончится, нажмите «Сохранить видео».</p>
+  <div class="setup" id="setup" hidden></div>
+  <h2 class="sh">Сообщество</h2>
+  <section class="community" id="community" aria-label="Сообщество" hidden>
+    <div class="tabs" role="tablist" id="tabs">
+      <button type="button" role="tab" data-tab="feed" aria-selected="true">Лента</button>
+      <button type="button" role="tab" data-tab="dm" aria-selected="false">Сообщения <span id="dm-count"></span></button>
+      <button type="button" role="tab" data-tab="mod" id="tab-mod" aria-selected="false" hidden>Жалобы <span id="mod-count"></span></button>
+    </div>
+    <div id="pane-feed">
+      <p class="cmuted" id="verify-note" hidden></p>
+      <form id="post-form" novalidate>
+        <label for="post-text" class="cmuted">Новый пост</label>
+        <textarea id="post-text" maxlength="500" rows="3" placeholder="Что нового?"></textarea>
+        <div class="crow"><span class="cmuted" id="post-left">500</span><button type="submit" id="post-btn" class="cbtn primary">Опубликовать</button></div>
+        <p class="cerr" id="post-err" role="alert"></p>
+      </form>
+      <div id="feed"></div>
+    </div>
+    <div id="pane-dm" hidden>
+      <p class="cmuted">Сообщения видите только вы и собеседник. Не отправляйте пароли и платёжные данные.</p>
+      <div class="contacts" id="contacts"></div>
+      <div class="thread" id="thread" aria-live="polite"></div>
+      <form class="dmform" id="dm-form" hidden novalidate>
+        <input type="text" id="dm-text" maxlength="500" autocomplete="off" placeholder="Сообщение" aria-label="Сообщение">
+        <button type="submit" class="cbtn primary" id="dm-btn">Отправить</button>
+      </form>
+      <p class="cerr" id="dm-err" role="alert"></p>
+    </div>
+    <div id="pane-mod" hidden><p class="cmuted">Режим модератора: жалобы видите только вы.</p><div id="reports"></div></div>
+  </section>
+  <p class="note" id="comm-lock">Лента и личные сообщения откроются после входа в аккаунт.</p>
+  <section class="accounts" aria-label="Аккаунты">
+    <h3>Аккаунты <span id="acc-count"></span></h3>
+    <ul class="acc-list" id="acc-list"><li class="empty">Загрузка…</li></ul>
+  </section>
+  <div class="authbar" id="authbar">
+    <p class="astatus" id="auth-status">Загрузка…</p>
+    <div class="barbtns">
+      <button id="btn-register" type="button" class="abtn">Регистрация</button>
+      <button id="btn-login" type="button" class="abtn alt">Войти</button>
+    </div>
+  </div>
+  <div class="overlay" id="overlay" hidden><div class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title"></div></div>
+</div>
+
+<noscript><p class="noscript">Для работы сайта нужен включённый JavaScript.</p></noscript>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="intro.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

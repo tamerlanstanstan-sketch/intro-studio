@@ -1,0 +1,508 @@
+/* Аккаунты, лента, личные сообщения и модерация на Firebase (Auth + Firestore). */
+(function () {
+  'use strict';
+
+  var CFG = window.FIREBASE_CONFIG || {};
+  var MOD_EMAIL = String(window.MOD_EMAIL || 'tamshop.ru@gmail.com').toLowerCase();
+
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function noop() {}
+  function lsGet(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+
+  var configured = !!(window.firebase && CFG.apiKey && CFG.projectId && String(CFG.apiKey).indexOf('ВСТАВЬТЕ') !== 0);
+  var auth = null, db = null, FV = null;
+  if (configured) {
+    try { firebase.initializeApp(CFG); auth = firebase.auth(); db = firebase.firestore(); FV = firebase.firestore.FieldValue; }
+    catch (e) { configured = false; }
+  }
+
+  var me = null;
+  var S = { users: {}, verified: {}, banned: {}, posts: [], likes: [], comments: [], msgs: [], reports: [], subs: [],
+    tab: 'feed', peer: null, open: {}, drafts: {}, seen: {}, reported: {}, dirty: false, modTried: false, dbErr: false, reportsOn: false };
+
+  function toMs(t) { return t && t.toMillis ? t.toMillis() : (typeof t === 'number' ? t : Date.now()); }
+  function when(ts) { return new Date(ts).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
+  function mailOk() { return !!(me && me.emailVerified); }
+  function isMod() { return !!(me && me.emailVerified && me.email && me.email.toLowerCase() === MOD_EMAIL); }
+  function isVer(id) { return !!S.verified[id]; }
+  function isBanned(id) { return !!S.banned[id]; }
+  function nameOf(id) { var u = S.users[id]; return (u && u.name) || (me && id === me.uid && me.displayName) || 'Участник'; }
+
+  function badge() {
+    var s = el('span', 'vbadge'); s.setAttribute('role', 'img'); s.setAttribute('aria-label', 'Подтверждённый аккаунт'); s.title = 'Подтверждённый аккаунт';
+    s.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#1d9bf0" d="M12 1.6l2.6 1.9 3.2-.2 1.1 3 2.6 1.9-1 3.1 1 3.1-2.6 1.9-1.1 3-3.2-.2L12 22.4l-2.6-1.9-3.2.2-1.1-3L2.5 15.8l1-3.1-1-3.1 2.6-1.9 1.1-3 3.2.2z"/><path fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M7.6 12.4l3 3 5.8-6.3"/></svg>';
+    return s;
+  }
+  function whoEl(id) {
+    var w = el('span', 'who'); w.appendChild(el('span', null, nameOf(id)));
+    if (isVer(id)) w.appendChild(badge());
+    return w;
+  }
+  function sureClick(btn, label, fn) {
+    var armed = false, orig = btn.textContent;
+    btn.addEventListener('click', function () {
+      if (!armed) { armed = true; btn.textContent = label; setTimeout(function () { armed = false; btn.textContent = orig; }, 3000); return; }
+      fn();
+    });
+  }
+  function authMsg(e) {
+    var m = {
+      'auth/email-already-in-use': 'Эта почта уже зарегистрирована. Нажмите «Войти».',
+      'auth/invalid-email': 'Проверьте почту: нужен адрес вида name@mail.ru.',
+      'auth/weak-password': 'Пароль слишком простой. Нужно минимум 8 символов.',
+      'auth/invalid-credential': 'Неверная почта или пароль.',
+      'auth/wrong-password': 'Неверная почта или пароль.',
+      'auth/user-not-found': 'Неверная почта или пароль.',
+      'auth/too-many-requests': 'Слишком много попыток. Подождите немного и повторите.',
+      'auth/network-request-failed': 'Нет связи с сервером. Проверьте интернет.',
+      'auth/operation-not-allowed': 'Вход по почте и паролю не включён в настройках Firebase. Смотрите README.'
+    };
+    return m[e && e.code] || 'Не получилось. Попробуйте ещё раз.';
+  }
+  function dbMsg(e, fallback) {
+    if (e && e.code === 'permission-denied') return 'Нет прав на это действие. Подтвердите почту или проверьте, что вы не заблокированы.';
+    return fallback;
+  }
+
+  /* ---------- диалоги ---------- */
+  var overlay = $('overlay'), dialog = $('dialog'), lastFocus = null;
+  function show(html) {
+    dialog.innerHTML = html; overlay.hidden = false;
+    var sh = $('f-show');
+    if (sh) sh.addEventListener('change', function () {
+      ['f-pw', 'f-pw2'].forEach(function (id) { var i = $(id); if (i) i.type = sh.checked ? 'text' : 'password'; });
+    });
+    var f = dialog.querySelector('input, button'); if (f) f.focus();
+  }
+  function close() { overlay.hidden = true; dialog.innerHTML = ''; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
+  overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !overlay.hidden) close(); });
+
+  function openNotConfigured() {
+    show('<h2 id="dlg-title">Сайт ещё не подключён к базе</h2><p>Регистрация и вход заработают после настройки Firebase. Шаги описаны в файле README.md в папке сайта.</p><div class="row"><button type="button" id="d-close" class="primary">Понятно</button></div>');
+    $('d-close').onclick = close;
+  }
+  function openRegister() {
+    show('<h2 id="dlg-title">Создать аккаунт</h2><form id="reg" novalidate>' +
+      '<label for="f-name">Имя<input id="f-name" maxlength="24" autocomplete="nickname"></label>' +
+      '<label for="f-email">Почта<input id="f-email" type="email" autocomplete="email"></label>' +
+      '<label for="f-pw">Пароль, не короче 8 символов<input id="f-pw" type="password" autocomplete="new-password"></label>' +
+      '<label for="f-pw2">Повторите пароль<input id="f-pw2" type="password" autocomplete="new-password"></label>' +
+      '<label class="chk" for="f-show"><input id="f-show" type="checkbox"> Показать пароль</label>' +
+      '<p class="err" id="d-err" role="alert"></p>' +
+      '<div class="row"><button type="button" id="d-close">Отмена</button><button type="submit" id="d-ok" class="primary">Зарегистрироваться</button></div></form>');
+    $('d-close').onclick = close;
+    $('reg').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var name = $('f-name').value.trim(), email = $('f-email').value.trim(), pw = $('f-pw').value, pw2 = $('f-pw2').value, err = $('d-err');
+      err.textContent = '';
+      if (name.length < 2) { err.textContent = 'Введите имя, минимум 2 символа.'; return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { err.textContent = 'Проверьте почту: нужен адрес вида name@mail.ru.'; return; }
+      if (pw.length < 8) { err.textContent = 'Пароль должен быть не короче 8 символов.'; return; }
+      if (pw !== pw2) { err.textContent = 'Пароли не совпадают.'; return; }
+      $('d-ok').disabled = true; $('d-ok').textContent = 'Создаю…';
+      try {
+        var cred = await auth.createUserWithEmailAndPassword(email, pw);
+        try { await cred.user.updateProfile({ displayName: name }); } catch (x) {}
+        try { await db.collection('users').doc(cred.user.uid).set({ name: name, createdAt: FV.serverTimestamp() }); } catch (x) {}
+        try { await cred.user.sendEmailVerification(); } catch (x) {}
+        me = auth.currentUser;
+        openVerifyInfo(true);
+      } catch (ex) {
+        err.textContent = authMsg(ex);
+        $('d-ok').disabled = false; $('d-ok').textContent = 'Зарегистрироваться';
+      }
+    });
+  }
+  function openLogin() {
+    show('<h2 id="dlg-title">Вход</h2><form id="login" novalidate>' +
+      '<label for="f-email">Почта<input id="f-email" type="email" autocomplete="email"></label>' +
+      '<label for="f-pw">Пароль<input id="f-pw" type="password" autocomplete="current-password"></label>' +
+      '<label class="chk" for="f-show"><input id="f-show" type="checkbox"> Показать пароль</label>' +
+      '<p class="err" id="d-err" role="alert"></p>' +
+      '<div class="row"><button type="button" id="d-close">Отмена</button><button type="submit" id="d-ok" class="primary">Войти</button></div>' +
+      '<button type="button" class="linkbtn" id="d-forgot">Забыли пароль?</button></form>');
+    $('d-close').onclick = close;
+    $('d-forgot').onclick = async function () {
+      var email = $('f-email').value.trim(), err = $('d-err');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { err.textContent = 'Введите почту, и мы пришлём письмо для сброса пароля.'; return; }
+      try { await auth.sendPasswordResetEmail(email); err.style.color = 'var(--muted)'; err.textContent = 'Если такой аккаунт есть, письмо уже отправлено.'; }
+      catch (ex) { err.style.color = ''; err.textContent = authMsg(ex); }
+    };
+    $('login').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var email = $('f-email').value.trim(), pw = $('f-pw').value, err = $('d-err'); err.style.color = ''; err.textContent = '';
+      if (!email || !pw) { err.textContent = 'Введите почту и пароль.'; return; }
+      $('d-ok').disabled = true;
+      try { await auth.signInWithEmailAndPassword(email, pw); close(); }
+      catch (ex) { err.textContent = authMsg(ex); $('d-ok').disabled = false; }
+    });
+  }
+  async function refreshUser() {
+    if (!auth.currentUser) return;
+    try { await auth.currentUser.reload(); await auth.currentUser.getIdToken(true); } catch (e) {}
+    me = auth.currentUser; afterAuth();
+  }
+  function openVerifyInfo(justCreated) {
+    show('<h2 id="dlg-title">' + (justCreated ? 'Аккаунт создан' : 'Подтвердите почту') + '</h2><p id="d-msg"></p><p class="err" id="d-err" role="alert"></p>' +
+      '<div class="row"><button type="button" id="d-resend">Отправить письмо ещё раз</button><button type="button" id="d-check" class="primary">Я подтвердил(а)</button></div>' +
+      '<div class="row"><button type="button" id="d-close">Закрыть</button></div>');
+    $('d-msg').textContent = 'Мы отправили письмо на ' + (me && me.email) + '. Перейдите по ссылке из письма (проверьте «Спам»), затем нажмите «Я подтвердил(а)». Пока почта не подтверждена, писать посты и сообщения нельзя.';
+    $('d-close').onclick = close;
+    $('d-resend').onclick = async function () {
+      try { await me.sendEmailVerification(); $('d-err').style.color = 'var(--muted)'; $('d-err').textContent = 'Письмо отправлено.'; }
+      catch (ex) { $('d-err').style.color = ''; $('d-err').textContent = authMsg(ex); }
+    };
+    $('d-check').onclick = async function () {
+      await refreshUser();
+      if (mailOk()) close(); else { $('d-err').style.color = ''; $('d-err').textContent = 'Почта пока не подтверждена. Откройте ссылку из письма и повторите.'; }
+    };
+  }
+  function openAccount() {
+    show('<h2 id="dlg-title">Ваш аккаунт</h2><div class="who" id="d-who"></div><p id="d-note"></p>' +
+      '<div class="row"><button type="button" id="d-close">Закрыть</button><button type="button" id="d-out" class="primary">Выйти</button></div>');
+    var who = $('d-who'); who.appendChild(el('span', null, nameOf(me.uid))); if (isVer(me.uid)) who.appendChild(badge());
+    var note = me.email + (isMod() ? '. Вы модератор.' : '.');
+    if (!mailOk()) note += ' Почта не подтверждена.';
+    $('d-note').textContent = note;
+    $('d-close').onclick = close;
+    $('d-out').onclick = async function () { try { await auth.signOut(); } catch (e) {} close(); };
+    if (!mailOk()) { var b = el('button', 'linkbtn', 'Подтвердить почту'); b.type = 'button'; b.onclick = function () { openVerifyInfo(false); }; dialog.insertBefore(b, dialog.lastElementChild); }
+  }
+
+  $('btn-register').addEventListener('click', function () {
+    lastFocus = this;
+    if (!configured) openNotConfigured(); else if (me) openAccount(); else openRegister();
+  });
+  $('btn-login').addEventListener('click', function () {
+    lastFocus = this;
+    if (!configured) openNotConfigured(); else if (me) openAccount(); else openLogin();
+  });
+
+  function setStatus() {
+    var st = $('auth-status'); st.textContent = '';
+    if (!configured) st.textContent = 'Сайт ещё не подключён к базе. Лента и аккаунты заработают после настройки.';
+    else if (!me) st.textContent = 'Вы не вошли. Зарегистрируйтесь или войдите, чтобы читать ленту и писать сообщения.';
+    else {
+      st.appendChild(el('span', null, 'Вы вошли как ' + nameOf(me.uid)));
+      if (isVer(me.uid)) st.appendChild(badge());
+      if (!mailOk()) st.appendChild(el('span', null, '· подтвердите почту'));
+    }
+  }
+
+  /* ---------- данные ---------- */
+  function onErr(e) {
+    if (S.dbErr) return; S.dbErr = true;
+    var box = $('setup'); box.hidden = false;
+    box.textContent = 'Нет доступа к базе данных. Проверьте, что в Firebase созданы Firestore и правила из файла firestore.rules (подробности в README.md).';
+    if (window.console) console.error(e);
+  }
+  function stopSubs() { S.subs.forEach(function (u) { try { u(); } catch (e) {} }); S.subs = []; S.users = {}; S.verified = {}; S.banned = {}; S.posts = []; S.likes = []; S.comments = []; S.msgs = []; S.reports = []; S.peer = null; S.modTried = false; S.reportsOn = false; }
+  function startSubs() {
+    var uid = me.uid, est = { serverTimestamps: 'estimate' };
+    S.seen = lsGet('seen-' + uid, {}); S.reported = lsGet('rep-' + uid, {});
+    S.subs.push(db.collection('users').onSnapshot(function (s) {
+      S.users = {}; s.forEach(function (d) { S.users[d.id] = d.data(); }); renderAll();
+    }, onErr));
+    S.subs.push(db.collection('verified').onSnapshot(function (s) {
+      S.verified = {}; s.forEach(function (d) { S.verified[d.id] = 1; });
+      if (isMod() && !S.verified[uid] && !S.modTried) { S.modTried = true; db.collection('verified').doc(uid).set({ ts: FV.serverTimestamp() }).catch(noop); }
+      renderAll();
+    }, onErr));
+    S.subs.push(db.collection('banned').onSnapshot(function (s) {
+      S.banned = {}; s.forEach(function (d) { S.banned[d.id] = 1; }); renderAll();
+    }, onErr));
+    S.subs.push(db.collection('posts').orderBy('ts', 'desc').limit(100).onSnapshot(function (s) {
+      S.posts = []; s.forEach(function (d) { var x = d.data(est); S.posts.push({ id: d.id, uid: x.uid, text: x.text, ts: toMs(x.ts) }); }); renderFeed(); renderMod();
+    }, onErr));
+    S.subs.push(db.collection('likes').limit(3000).onSnapshot(function (s) {
+      S.likes = []; s.forEach(function (d) { var x = d.data(); S.likes.push({ id: d.id, pid: x.pid, uid: x.uid }); }); renderFeed();
+    }, onErr));
+    S.subs.push(db.collection('comments').orderBy('ts', 'desc').limit(500).onSnapshot(function (s) {
+      S.comments = []; s.forEach(function (d) { var x = d.data(est); S.comments.push({ id: d.id, pid: x.pid, uid: x.uid, text: x.text, ts: toMs(x.ts) }); }); renderFeed(); renderMod();
+    }, onErr));
+    S.subs.push(db.collection('messages').where('participants', 'array-contains', uid).limit(500).onSnapshot(function (s) {
+      S.msgs = []; s.forEach(function (d) { var x = d.data(est); S.msgs.push({ id: d.id, from: x.from, to: x.to, text: x.text, ts: toMs(x.ts) }); });
+      renderThread(); updateBadges();
+    }, onErr));
+    if (isMod()) {
+      S.reportsOn = true;
+      S.subs.push(db.collection('reports').limit(500).onSnapshot(function (s) {
+        S.reports = []; s.forEach(function (d) { var x = d.data(); S.reports.push({ id: d.id, pid: x.pid, postUid: x.postUid, reporter: x.reporter, reason: x.reason }); }); renderMod();
+      }, onErr));
+    }
+  }
+  async function ensureProfile() {
+    try {
+      var r = db.collection('users').doc(me.uid), s = await r.get();
+      if (!s.exists) {
+        var n = String(me.displayName || (me.email || 'user').split('@')[0]).slice(0, 24); if (n.length < 2) n += '_';
+        await r.set({ name: n, createdAt: FV.serverTimestamp() });
+      }
+    } catch (e) {}
+  }
+
+  var started = false;
+  function afterAuth() {
+    var on = !!(configured && me);
+    $('community').hidden = !on; $('comm-lock').hidden = on;
+    if (on && !started) { started = true; startSubs(); ensureProfile(); }
+    if (!on && started) { started = false; stopSubs(); }
+    if (on && started && isMod() && !S.reportsOn) { stopSubs(); startSubs(); } /* модератор подтвердил почту после входа */
+    setStatus(); renderAll();
+  }
+  if (configured) {
+    auth.onAuthStateChanged(function (u) { me = u; afterAuth(); });
+  } else {
+    afterAuth();
+    var box = $('setup'); box.hidden = false;
+    box.textContent = 'Сайт ещё не подключён к Firebase: откройте js/firebase-config.js и вставьте настройки проекта (шаги в README.md). До этого работает только видео-интро.';
+  }
+
+  /* ---------- список аккаунтов ---------- */
+  var listEl = $('acc-list'), countEl = $('acc-count');
+  function renderAccounts() {
+    listEl.textContent = '';
+    var ids = Object.keys(S.users);
+    if (!configured || !me) {
+      listEl.appendChild(el('li', 'empty', configured ? 'Список аккаунтов виден после входа.' : 'Список аккаунтов появится после настройки сайта.')); countEl.textContent = ''; return;
+    }
+    ids.sort(function (a, b) { return nameOf(a).localeCompare(nameOf(b), 'ru'); });
+    countEl.textContent = ids.length ? '· ' + ids.length : '';
+    ids.forEach(function (id) {
+      var li = el('li'); li.appendChild(el('span', 'nm', nameOf(id)));
+      if (isVer(id)) li.appendChild(badge());
+      if (isBanned(id)) li.appendChild(el('span', 'tag', 'заблокирован'));
+      if (isMod()) {
+        var vb = el('button', 'mini', isVer(id) ? 'Снять галочку' : 'Дать галочку'); vb.type = 'button';
+        vb.onclick = function () { (isVer(id) ? db.collection('verified').doc(id).delete() : db.collection('verified').doc(id).set({ ts: FV.serverTimestamp() })).catch(noop); };
+        li.appendChild(vb);
+        if (id !== me.uid) {
+          var bb = el('button', 'mini', isBanned(id) ? 'Разблокировать' : 'Заблокировать'); bb.type = 'button';
+          bb.onclick = function () { (isBanned(id) ? db.collection('banned').doc(id).delete() : db.collection('banned').doc(id).set({ ts: FV.serverTimestamp() })).catch(noop); };
+          li.appendChild(bb);
+        }
+      }
+      listEl.appendChild(li);
+    });
+  }
+
+  /* ---------- вкладки ---------- */
+  function setTab(t) {
+    S.tab = t;
+    Array.prototype.forEach.call($('tabs').querySelectorAll('button'), function (b) { b.setAttribute('aria-selected', b.getAttribute('data-tab') === t ? 'true' : 'false'); });
+    $('pane-feed').hidden = t !== 'feed'; $('pane-dm').hidden = t !== 'dm'; $('pane-mod').hidden = t !== 'mod';
+    if (t === 'dm') markSeen();
+  }
+  $('tabs').addEventListener('click', function (e) { var b = e.target.closest ? e.target.closest('button[data-tab]') : null; if (b) setTab(b.getAttribute('data-tab')); });
+
+  /* ---------- лента ---------- */
+  var postText = $('post-text');
+  postText.addEventListener('input', function () { $('post-left').textContent = 500 - postText.value.length; });
+  function canPost() { return mailOk() && !isBanned(me.uid); }
+  function composerState() {
+    var note = $('verify-note'), can = !!me && canPost();
+    if (!me) { note.hidden = true; return; }
+    note.hidden = can;
+    if (!mailOk()) note.textContent = 'Подтвердите почту, чтобы писать посты, ставить лайки и отправлять сообщения.';
+    else if (isBanned(me.uid)) note.textContent = 'Ваш аккаунт заблокирован модератором.';
+    $('post-btn').disabled = !can; postText.disabled = !can;
+  }
+  $('post-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var err = $('post-err'), text = postText.value.trim(); err.textContent = '';
+    if (!text) { err.textContent = 'Напишите текст поста.'; return; }
+    $('post-btn').disabled = true;
+    try {
+      await db.collection('posts').add({ uid: me.uid, text: text, ts: FV.serverTimestamp() });
+      postText.value = ''; $('post-left').textContent = '500';
+    } catch (ex) { err.textContent = dbMsg(ex, 'Не удалось опубликовать. Попробуйте ещё раз.'); }
+    composerState();
+  });
+  function likeId(pid) { return pid + '_' + me.uid; }
+  async function toggleLike(pid) {
+    var mine = S.likes.some(function (l) { return l.id === likeId(pid); });
+    try {
+      var ref = db.collection('likes').doc(likeId(pid));
+      if (mine) await ref.delete(); else await ref.set({ pid: pid, uid: me.uid, ts: FV.serverTimestamp() });
+    } catch (e) { $('post-err').textContent = dbMsg(e, 'Не удалось поставить лайк.'); }
+  }
+  async function deletePost(p) {
+    try {
+      var b = db.batch();
+      if (isMod()) {
+        S.comments.forEach(function (c) { if (c.pid === p.id) b.delete(db.collection('comments').doc(c.id)); });
+        S.reports.forEach(function (r) { if (r.pid === p.id) b.delete(db.collection('reports').doc(r.id)); });
+      }
+      b.delete(db.collection('posts').doc(p.id));
+      await b.commit();
+    } catch (e) { $('post-err').textContent = dbMsg(e, 'Не удалось удалить пост.'); }
+  }
+  async function sendReport(p, reason) {
+    await db.collection('reports').doc(p.id + '_' + me.uid).set({ pid: p.id, postUid: p.uid, reporter: me.uid, reason: reason, ts: FV.serverTimestamp() });
+    S.reported[p.id] = 1; lsSet('rep-' + me.uid, S.reported);
+  }
+  function commentsFor(pid) { return S.comments.filter(function (c) { return c.pid === pid; }).sort(function (a, b) { return a.ts - b.ts; }); }
+  function commentPanel(p) {
+    var box = el('div', 'cm');
+    commentsFor(p.id).forEach(function (c) {
+      var row = el('div', 'c'), h = el('div', 'head'); h.appendChild(whoEl(c.uid)); h.appendChild(el('span', 'cmuted', when(c.ts)));
+      if (c.uid === me.uid || isMod()) {
+        var d = el('button', 'cbtn danger', 'Удалить'); d.type = 'button'; d.style.cssText = 'min-height:28px;padding:2px 10px;font-size:12px';
+        sureClick(d, 'Точно?', function () { db.collection('comments').doc(c.id).delete().catch(function (e) { $('post-err').textContent = dbMsg(e, 'Не удалось удалить комментарий.'); }); });
+        h.appendChild(d);
+      }
+      row.appendChild(h); row.appendChild(el('p', null, c.text)); box.appendChild(row);
+    });
+    if (canPost()) {
+      var f = el('form'), inp = el('input'); inp.type = 'text'; inp.maxLength = 300; inp.placeholder = 'Комментарий'; inp.setAttribute('aria-label', 'Комментарий');
+      inp.value = S.drafts[p.id] || ''; inp.addEventListener('input', function () { S.drafts[p.id] = inp.value; });
+      var ok = el('button', 'cbtn primary', 'Отправить'); ok.type = 'submit'; f.appendChild(inp); f.appendChild(ok);
+      f.addEventListener('submit', async function (e) {
+        e.preventDefault(); var t = inp.value.trim(); if (!t) return; ok.disabled = true;
+        try { await db.collection('comments').add({ pid: p.id, uid: me.uid, text: t, ts: FV.serverTimestamp() }); S.drafts[p.id] = ''; inp.value = ''; }
+        catch (ex) { $('post-err').textContent = dbMsg(ex, 'Не удалось отправить комментарий.'); }
+        ok.disabled = false;
+      });
+      box.appendChild(f);
+    }
+    return box;
+  }
+  $('feed').addEventListener('focusout', function () { if (S.dirty) { S.dirty = false; setTimeout(renderFeed, 0); } });
+  function openReport(card, acts, p) {
+    acts.hidden = true;
+    var rep = el('div', 'rep'), sel = el('select'); sel.setAttribute('aria-label', 'Причина жалобы');
+    ['Спам', 'Оскорбления', 'Опасный контент', 'Другое'].forEach(function (r) { var o = el('option', null, r); o.value = r; sel.appendChild(o); });
+    var ok = el('button', 'cbtn primary', 'Отправить'), no = el('button', 'cbtn', 'Отмена'); ok.type = 'button'; no.type = 'button';
+    no.onclick = function () { rep.parentNode.removeChild(rep); acts.hidden = false; };
+    ok.onclick = async function () {
+      ok.disabled = true;
+      try { await sendReport(p, sel.value); renderFeed(); }
+      catch (e) { ok.disabled = false; $('post-err').textContent = dbMsg(e, 'Не удалось отправить жалобу.'); }
+    };
+    rep.appendChild(sel); rep.appendChild(ok); rep.appendChild(no); card.appendChild(rep);
+  }
+  function renderFeed() {
+    var box = $('feed'); if (!me || !configured) return;
+    composerState();
+    var ae = document.activeElement;
+    if (ae && box.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) { S.dirty = true; return; }
+    box.textContent = '';
+    if (!S.posts.length) { box.appendChild(el('p', 'cmuted', 'Лента пуста. Напишите первый пост.')); return; }
+    var counts = {}, mine = {};
+    S.likes.forEach(function (l) { counts[l.pid] = (counts[l.pid] || 0) + 1; if (l.uid === me.uid) mine[l.pid] = 1; });
+    S.posts.forEach(function (p) {
+      var card = el('article', 'post'), head = el('div', 'head');
+      head.appendChild(whoEl(p.uid)); head.appendChild(el('span', 'cmuted', when(p.ts)));
+      card.appendChild(head); card.appendChild(el('p', 'body', p.text));
+      var acts = el('div', 'acts');
+      var like = el('button', 'cbtn' + (mine[p.id] ? ' on' : ''), (mine[p.id] ? '♥ ' : '♡ ') + (counts[p.id] || 0));
+      like.type = 'button'; like.setAttribute('aria-pressed', mine[p.id] ? 'true' : 'false'); like.setAttribute('aria-label', 'Нравится');
+      like.disabled = !canPost();
+      like.addEventListener('click', function () { toggleLike(p.id); }); acts.appendChild(like);
+      var nc = commentsFor(p.id).length;
+      var cb = el('button', 'cbtn' + (S.open[p.id] ? ' on' : ''), 'Комментарии' + (nc ? ' (' + nc + ')' : '')); cb.type = 'button'; cb.setAttribute('aria-expanded', S.open[p.id] ? 'true' : 'false');
+      cb.addEventListener('click', function () { S.open[p.id] = !S.open[p.id]; renderFeed(); }); acts.appendChild(cb);
+      if (p.uid !== me.uid && canPost()) {
+        var rb = el('button', 'cbtn', S.reported[p.id] ? 'Жалоба отправлена' : 'Пожаловаться'); rb.type = 'button';
+        if (S.reported[p.id]) rb.disabled = true;
+        rb.addEventListener('click', function () { openReport(card, acts, p); }); acts.appendChild(rb);
+      }
+      if (p.uid === me.uid || isMod()) {
+        var del = el('button', 'cbtn danger', 'Удалить'); del.type = 'button';
+        sureClick(del, 'Точно удалить?', function () { deletePost(p); }); acts.appendChild(del);
+      }
+      card.appendChild(acts); if (S.open[p.id]) card.appendChild(commentPanel(p)); box.appendChild(card);
+    });
+  }
+
+  /* ---------- жалобы (модератор) ---------- */
+  async function dismiss(pid) {
+    try { var b = db.batch(); S.reports.forEach(function (r) { if (r.pid === pid) b.delete(db.collection('reports').doc(r.id)); }); await b.commit(); }
+    catch (e) { $('post-err').textContent = dbMsg(e, 'Не удалось закрыть жалобы.'); }
+  }
+  function renderMod() {
+    var tab = $('tab-mod'); tab.hidden = !(me && isMod());
+    if (!me || !isMod()) { if (S.tab === 'mod') setTab('feed'); return; }
+    var groups = {};
+    S.reports.forEach(function (r) { (groups[r.pid] = groups[r.pid] || []).push(r); });
+    var ids = Object.keys(groups);
+    $('mod-count').textContent = ids.length ? '(' + ids.length + ')' : '';
+    var box = $('reports'); box.textContent = '';
+    if (!ids.length) { box.appendChild(el('p', 'cmuted', 'Жалоб нет.')); return; }
+    ids.forEach(function (pid) {
+      var g = groups[pid], authorId = g[0].postUid, post = S.posts.filter(function (p) { return p.id === pid; })[0];
+      var card = el('div', 'rgroup'), head = el('div', 'head'); head.appendChild(whoEl(authorId));
+      head.appendChild(el('span', 'cmuted', 'жалоб: ' + g.length)); card.appendChild(head);
+      card.appendChild(post ? el('blockquote', null, post.text) : el('p', 'cmuted', 'Пост уже удалён.'));
+      var why = {}; g.forEach(function (x) { why[x.reason] = 1; });
+      card.appendChild(el('p', 'cmuted', 'Причины: ' + Object.keys(why).join(', ') + '. Жаловались: ' + g.map(function (x) { return nameOf(x.reporter); }).join(', ') + '.'));
+      var acts = el('div', 'acts');
+      if (post) { var d = el('button', 'cbtn danger', 'Удалить пост'); d.type = 'button'; d.onclick = function () { d.disabled = true; deletePost(post); }; acts.appendChild(d); }
+      if (authorId && authorId !== me.uid && !isBanned(authorId)) {
+        var bn = el('button', 'cbtn danger', 'Заблокировать автора'); bn.type = 'button';
+        sureClick(bn, 'Точно заблокировать?', function () { db.collection('banned').doc(authorId).set({ ts: FV.serverTimestamp() }).catch(noop); }); acts.appendChild(bn);
+      }
+      var x = el('button', 'cbtn', post ? 'Отклонить жалобы' : 'Закрыть'); x.type = 'button'; x.onclick = function () { x.disabled = true; dismiss(pid); };
+      acts.appendChild(x); card.appendChild(acts); box.appendChild(card);
+    });
+  }
+
+  /* ---------- личные сообщения ---------- */
+  function unreadFor(peer) { return S.msgs.filter(function (m) { return m.from === peer && m.to === me.uid && m.ts > (S.seen[peer] || 0); }).length; }
+  function markSeen() {
+    if (!me || !S.peer || S.tab !== 'dm') return;
+    var mx = 0; S.msgs.forEach(function (m) { if (m.from === S.peer && m.to === me.uid && m.ts > mx) mx = m.ts; });
+    if (mx > (S.seen[S.peer] || 0)) { S.seen[S.peer] = mx; lsSet('seen-' + me.uid, S.seen); }
+    updateBadges();
+  }
+  function updateBadges() {
+    if (!me) return;
+    var total = 0; Object.keys(S.users).forEach(function (p) { if (p !== me.uid) total += unreadFor(p); });
+    var c = $('dm-count'); c.textContent = ''; if (total) { c.className = 'cnt'; c.textContent = total; } else c.className = '';
+    renderContacts();
+  }
+  function renderContacts() {
+    var box = $('contacts'); if (!me) return; box.textContent = '';
+    var others = Object.keys(S.users).filter(function (id) { return id !== me.uid; });
+    if (!others.length) { box.appendChild(el('p', 'cmuted', 'Пока нет других участников. Когда кто-то зарегистрируется, он появится здесь.')); return; }
+    others.sort(function (a, b) { return nameOf(a).localeCompare(nameOf(b), 'ru'); });
+    others.forEach(function (id) {
+      var b = el('button', 'cbtn' + (S.peer === id ? ' on' : '')); b.type = 'button'; b.setAttribute('aria-pressed', S.peer === id ? 'true' : 'false');
+      b.appendChild(el('span', null, nameOf(id))); if (isVer(id)) b.appendChild(badge());
+      var un = unreadFor(id); if (un) b.appendChild(el('span', 'cnt', String(un)));
+      b.onclick = function () { S.peer = id; $('dm-err').textContent = ''; renderContacts(); renderThread(); };
+      box.appendChild(b);
+    });
+  }
+  function renderThread() {
+    if (!me) return;
+    var box = $('thread'), form = $('dm-form');
+    if (!S.peer) { box.textContent = ''; box.appendChild(el('p', 'cmuted', 'Выберите собеседника.')); form.hidden = true; return; }
+    form.hidden = !canPost();
+    var msgs = S.msgs.filter(function (m) { return (m.from === S.peer && m.to === me.uid) || (m.from === me.uid && m.to === S.peer); });
+    msgs.sort(function (a, b) { return a.ts - b.ts; });
+    box.textContent = '';
+    if (!msgs.length) box.appendChild(el('p', 'cmuted', canPost() ? 'Сообщений пока нет. Напишите первым.' : 'Подтвердите почту, чтобы писать сообщения.'));
+    msgs.forEach(function (m) { var d = el('div', 'msg' + (m.from === me.uid ? ' me' : ''), m.text); d.appendChild(el('time', null, when(m.ts))); box.appendChild(d); });
+    box.scrollTop = box.scrollHeight;
+    markSeen();
+  }
+  $('dm-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var inp = $('dm-text'), err = $('dm-err'), text = inp.value.trim(); err.textContent = '';
+    if (!text || !S.peer) return;
+    $('dm-btn').disabled = true;
+    try { await db.collection('messages').add({ from: me.uid, to: S.peer, participants: [me.uid, S.peer], text: text, ts: FV.serverTimestamp() }); inp.value = ''; }
+    catch (ex) { err.textContent = dbMsg(ex, 'Не удалось отправить сообщение. Попробуйте ещё раз.'); }
+    $('dm-btn').disabled = false; inp.focus();
+  });
+
+  function renderAll() {
+    renderAccounts(); setStatus();
+    if (me && configured) { renderFeed(); renderMod(); renderContacts(); renderThread(); updateBadges(); }
+  }
+  renderAccounts();
+})();
