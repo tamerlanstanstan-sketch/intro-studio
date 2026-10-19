@@ -97,8 +97,18 @@
   function avatar(id, big) {
     var n = nameOf(id).trim(), h = 0, i;
     for (i = 0; i < String(id).length; i++) h = (h * 31 + String(id).charCodeAt(i)) % 360;
-    var s = el('span', 'av' + (big ? ' big' : ''), (n.charAt(0) || '?').toUpperCase());
+    var initial = (n.charAt(0) || '?').toUpperCase();
+    var s = el('span', 'av' + (big ? ' big' : ''));
     s.style.background = 'hsl(' + h + ',45%,38%)'; s.setAttribute('aria-hidden', 'true');
+    function showInitial() { s.textContent = initial; }
+    var imageUrl = S.users[id] && S.users[id].avatar;
+    if (imageUrl) {
+      var img = document.createElement('img');
+      img.alt = '';
+      img.onerror = function () { if (img.parentNode === s) s.removeChild(img); showInitial(); };
+      s.appendChild(img);
+      img.src = imageUrl;
+    } else showInitial();
     return s;
   }
   function whoEl(id) {
@@ -283,7 +293,7 @@
     if (!postText.value) { postText.value = lsGet('draft-' + uid, ''); $('post-left').textContent = 500 - postText.value.length; }
     S.seen = lsGet('seen-' + uid, {}); S.reported = lsGet('rep-' + uid, {});
     S.subs.push(db.collection('users').onSnapshot(function (s) {
-      S.users = {}; s.forEach(function (d) { var x = d.data(est); S.users[d.id] = { name: x.name, ts: x.createdAt ? toMs(x.createdAt) : 0 }; }); renderAll();
+      S.users = {}; s.forEach(function (d) { var x = d.data(est); S.users[d.id] = { name: x.name, avatar: typeof x.avatar === 'string' ? x.avatar : '', ts: x.createdAt ? toMs(x.createdAt) : 0 }; }); renderAll();
     }, onErr));
     S.subs.push(db.collection('verified').onSnapshot(function (s) {
       S.verified = {}; s.forEach(function (d) { S.verified[d.id] = 1; });
@@ -631,6 +641,64 @@
     var box = $('my-profile'); if (!me || !box) return;
     box.textContent = ''; box.appendChild(profileBlock(me.uid));
   }
+  function encodeAvatar(file) {
+    return new Promise(function (resolve, reject) {
+      if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { reject(new Error('Выберите фото в формате JPEG, PNG или WebP.')); return; }
+      if (file.size > 5 * 1024 * 1024) { reject(new Error('Размер исходного фото не должен превышать 5 МБ.')); return; }
+      var url = URL.createObjectURL(file), image = new Image();
+      image.onload = function () {
+        URL.revokeObjectURL(url);
+        try {
+          if (!image.naturalWidth || !image.naturalHeight) { reject(new Error('В изображении нет данных.')); return; }
+          var side = 256, scale = Math.min(1, side / Math.max(image.naturalWidth, image.naturalHeight));
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+          var context = canvas.getContext('2d');
+          if (!context) { reject(new Error('Браузер не смог обработать изображение.')); return; }
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          var result;
+          for (var quality = 0.82; quality >= 0.34; quality -= 0.12) {
+            result = canvas.toDataURL('image/jpeg', quality);
+            if (result.length <= 150000) { resolve(result); return; }
+          }
+          reject(new Error('Не удалось уменьшить фото до допустимого размера.'));
+        } catch (ex) { reject(ex); }
+      };
+      image.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Не удалось прочитать изображение.')); };
+      image.src = url;
+    });
+  }
+  var avatarInput = $('av-input'), avatarRemove = $('av-remove');
+  avatarInput.addEventListener('change', async function () {
+    var file = avatarInput.files && avatarInput.files[0];
+    if (!file) return;
+    var err = $('av-err'), msg = $('av-msg');
+    err.textContent = ''; msg.textContent = 'Обрабатываю фото…';
+    avatarInput.disabled = true; avatarRemove.disabled = true;
+    try {
+      var data = await encodeAvatar(file);
+      await db.collection('users').doc(me.uid).update({ avatar: data });
+      msg.textContent = 'Фото профиля обновлено.';
+    } catch (ex) {
+      msg.textContent = '';
+      err.textContent = ex && ex.message ? ex.message : dbMsg(ex, 'Не удалось сохранить фото профиля. Проверьте правила Firestore и попробуйте ещё раз.');
+    } finally {
+      avatarInput.value = '';
+      avatarInput.disabled = false; avatarRemove.disabled = false;
+    }
+  });
+  avatarRemove.addEventListener('click', async function () {
+    var err = $('av-err'), msg = $('av-msg');
+    err.textContent = ''; msg.textContent = '';
+    if (!S.users[me.uid] || !S.users[me.uid].avatar) { msg.textContent = 'Фото профиля не задано.'; return; }
+    avatarInput.disabled = true; avatarRemove.disabled = true;
+    try {
+      await db.collection('users').doc(me.uid).update({ avatar: FV.delete() });
+      msg.textContent = 'Фото профиля удалено.';
+    } catch (ex) { err.textContent = dbMsg(ex, 'Не удалось удалить фото профиля. Проверьте правила Firestore и попробуйте ещё раз.'); }
+    finally { avatarInput.disabled = false; avatarRemove.disabled = false; }
+  });
   $('name-form').addEventListener('submit', async function (e) {
     e.preventDefault();
     var err = $('name-err'), msg = $('name-msg'), name = $('name-input').value.trim().replace(/\s+/g, ' '); err.textContent = ''; msg.textContent = '';

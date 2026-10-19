@@ -9,18 +9,26 @@ service cloud.firestore {
     function notBanned() { return !exists(/databases/$(database)/documents/banned/$(request.auth.uid)); }
     function canWrite() { return mailOk() && notBanned(); }
     function okText(t, max) { return t is string && t.size() > 0 && t.size() <= max; }
+    function validAvatar(data) {
+      return !('avatar' in data) || (data.avatar is string
+        && data.avatar.size() <= 150000
+        && data.avatar.matches('^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$'));
+    }
 
     match /users/{uid} {
       allow read: if signedIn();
       allow create: if signedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['name', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['name', 'createdAt', 'avatar'])
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 24
+        && validAvatar(request.resource.data)
         && request.resource.data.createdAt == request.time;
       allow update: if signedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['name', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['name', 'createdAt', 'avatar'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'avatar'])
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 24
+        && validAvatar(request.resource.data)
         && request.resource.data.createdAt == resource.data.createdAt;
     }
 

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#05070a">
-<title>ИнтроКруг</title>
+<title>Интро Студия</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500&family=Unbounded:wght@500;700&display=swap">
@@ -13,16 +13,16 @@
 </head>
 <body>
 <div class="wrap">
-  <header class="top"><h1>ИнтроКруг</h1><p>лента, лайки и личные сообщения.</p></header>
-  <h2 class="sh">ИнтроКруг</h2>
+  <header class="top"><h1>Интро Студия</h1><p>Анимированное интро, лента, лайки и личные сообщения.</p></header>
+  <h2 class="sh">Интро</h2>
   <div class="stage" id="stage">
     <canvas id="gl"></canvas>
     <div class="vignette"></div>
     <div class="sweep" id="sweep"></div>
     <div class="copy" id="copy">
-      <div class="scene" data-i="0"><div class="kicker" data-split>Добро пожаловать</div><h2 class="title big" data-split data-name>ИнтроКруг</h2></div>
+      <div class="scene" data-i="0"><div class="kicker" data-split>Добро пожаловать</div><h2 class="title big" data-split data-name>Твой канал</h2></div>
       <div class="scene" data-i="1"><div class="kicker" data-split>О чём мы</div><h2 class="title" data-split>Идеи. Истории. Эмоции.</h2></div>
-      <div class="scene" data-i="2"><div class="kicker" data-split>Каждую неделю</div><h2 class="title" data-split>Новое по пятницам</h2></div>
+      <div class="scene" data-i="2"><div class="kicker" data-split>Каждую неделю</div><h2 class="title" data-split>Новое видео по пятницам</h2></div>
       <div class="scene" data-i="3"><div class="kicker" data-split>Не пропусти</div><h2 class="title big" data-split>Подписывайся</h2><div class="sub fade" data-name>Твой канал</div></div>
     </div>
     <div class="bars" id="bars"><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i></div>
@@ -71,6 +71,16 @@
     <div id="pane-profile" hidden>
       <div id="my-profile"></div>
       <h3 class="sh2">Настройки</h3>
+      <div class="avset">
+        <span class="cmuted">Аватар</span>
+        <div class="crow">
+          <label class="cbtn primary filebtn" for="av-input">Загрузить фото</label>
+          <input type="file" id="av-input" accept="image/jpeg,image/png,image/webp" hidden>
+          <button type="button" class="cbtn" id="av-remove">Убрать фото</button>
+        </div>
+        <span class="cmuted" id="av-msg"></span>
+        <p class="cerr" id="av-err" role="alert"></p>
+      </div>
       <form id="name-form" novalidate>
         <label for="name-input" class="cmuted">Имя</label>
         <input type="text" id="name-input" maxlength="24" autocomplete="nickname">
