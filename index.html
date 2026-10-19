@@ -38,6 +38,7 @@
     <div class="tabs" role="tablist" id="tabs">
       <button type="button" role="tab" data-tab="feed" aria-selected="true">Лента</button>
       <button type="button" role="tab" data-tab="dm" aria-selected="false">Сообщения <span id="dm-count"></span></button>
+      <button type="button" role="tab" data-tab="profile" aria-selected="false">Профиль</button>
       <button type="button" role="tab" data-tab="mod" id="tab-mod" aria-selected="false" hidden>Жалобы <span id="mod-count"></span></button>
     </div>
     <div id="pane-feed">
@@ -48,6 +49,10 @@
         <div class="crow"><span class="cmuted" id="post-left">500</span><button type="submit" id="post-btn" class="cbtn primary">Опубликовать</button></div>
         <p class="cerr" id="post-err" role="alert"></p>
       </form>
+      <div class="tabs subtabs" id="feed-tabs" role="tablist" aria-label="Порядок постов">
+        <button type="button" role="tab" data-sub="new" aria-selected="true">Новое</button>
+        <button type="button" role="tab" data-sub="popular" aria-selected="false">Популярное</button>
+      </div>
       <div id="feed"></div>
     </div>
     <div id="pane-dm" hidden>
@@ -60,6 +65,16 @@
         <button type="submit" class="cbtn primary" id="dm-btn">Отправить</button>
       </form>
       <p class="cerr" id="dm-err" role="alert"></p>
+    </div>
+    <div id="pane-profile" hidden>
+      <div id="my-profile"></div>
+      <h3 class="sh2">Настройки</h3>
+      <form id="name-form" novalidate>
+        <label for="name-input" class="cmuted">Имя</label>
+        <input type="text" id="name-input" maxlength="24" autocomplete="nickname">
+        <div class="crow"><span class="cmuted" id="name-msg"></span><button type="submit" id="name-btn" class="cbtn primary">Сохранить имя</button></div>
+        <p class="cerr" id="name-err" role="alert"></p>
+      </form>
     </div>
     <div id="pane-mod" hidden><p class="cmuted">Режим модератора: жалобы видите только вы.</p><div id="reports"></div></div>
   </section>
@@ -90,3 +105,4 @@
 <script src="firebase-config.js"></script>
 <script src="app.js"></script>
 </body>
+</html>

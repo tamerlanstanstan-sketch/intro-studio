@@ -15,7 +15,7 @@
   var configured = !!(window.firebase && cfgFilled);
   var notConfMsg = cfgFilled
     ? 'Не загрузились скрипты Firebase. Проверьте интернет, отключите блокировщик рекламы и обновите страницу.'
-    : 'Сайт ещё не подключён к Firebase: откройте js/firebase-config.js и вставьте настройки проекта (шаги в README.md).';
+    : 'Сайт ещё не подключён к Firebase: откройте firebase-config.js и вставьте настройки проекта (шаги в README.md).';
   var auth = null, db = null, FV = null;
   if (configured) {
     try { firebase.initializeApp(CFG); auth = firebase.auth(); db = firebase.firestore(); FV = firebase.firestore.FieldValue; }
@@ -24,7 +24,7 @@
 
   var me = null;
   var S = { users: {}, verified: {}, banned: {}, posts: [], likes: [], comments: [], msgs: [], reports: [], subs: [],
-    tab: 'feed', peer: null, open: {}, drafts: {}, seen: {}, reported: {}, dirty: false, modTried: false, dbErr: false, reportsOn: false };
+    tab: 'feed', sub: 'new', peer: null, open: {}, drafts: {}, seen: {}, reported: {}, dirty: false, modTried: false, dbErr: false, reportsOn: false };
 
   function toMs(t) { return t && t.toMillis ? t.toMillis() : (typeof t === 'number' ? t : Date.now()); }
   function when(ts) { return new Date(ts).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
@@ -40,7 +40,8 @@
     return s;
   }
   function whoEl(id) {
-    var w = el('span', 'who'); w.appendChild(el('span', null, nameOf(id)));
+    var w = el('span', 'who'), nb = el('button', 'namebtn', nameOf(id)); nb.type = 'button'; nb.title = 'Открыть профиль';
+    nb.addEventListener('click', function () { openProfile(id); }); w.appendChild(nb);
     if (isVer(id)) w.appendChild(badge());
     return w;
   }
@@ -64,8 +65,8 @@
       'auth/network-request-failed': 'Нет связи с сервером. Проверьте интернет и отключите VPN или блокировщик.',
       'auth/operation-not-allowed': 'В Firebase не включён вход по почте и паролю: Authentication -> Способ входа -> Электронная почта/пароль -> Включить.',
       'auth/unauthorized-domain': 'Адрес сайта не добавлен в Firebase: Authentication -> Настройки -> Авторизованные домены -> добавьте ВАШ_ЛОГИН.github.io.',
-      'auth/invalid-api-key': 'Неверный apiKey в js/firebase-config.js. Скопируйте настройки из консоли Firebase заново.',
-      'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'Неверный apiKey в js/firebase-config.js. Скопируйте настройки из консоли Firebase заново.',
+      'auth/invalid-api-key': 'Неверный apiKey в firebase-config.js. Скопируйте настройки из консоли Firebase заново.',
+      'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'Неверный apiKey в firebase-config.js. Скопируйте настройки из консоли Firebase заново.',
       'auth/configuration-not-found': 'В проекте Firebase не запущена служба Authentication: откройте Authentication и нажмите «Начать».',
       'auth/operation-not-supported-in-this-environment': 'Сайт открыт как файл с компьютера. Откройте его по адресу https:// (через GitHub Pages).',
       'auth/internal-error': 'Внутренняя ошибка Firebase. Проверьте настройки проекта и повторите.'
@@ -289,15 +290,15 @@
       accQ.hidden = true;
       listEl.appendChild(el('li', 'empty', configured ? 'Список аккаунтов виден после входа.' : 'Список аккаунтов появится после настройки сайта.')); countEl.textContent = ''; return;
     }
-    accQ.hidden = !isMod();
-    var q = isMod() ? accQ.value.trim().toLowerCase() : '';
+    accQ.hidden = false;
+    var q = accQ.value.trim().toLowerCase();
     var ids = Object.keys(S.users).filter(function (id) { return !q || nameOf(id).toLowerCase().indexOf(q) !== -1; });
     ids.sort(function (a, b) { return (S.users[b].ts || 0) - (S.users[a].ts || 0); });
     ids = ids.slice(0, 5);
     countEl.textContent = q ? '· найдено' : '· последние 5';
     if (!ids.length) listEl.appendChild(el('li', 'empty', q ? 'Никого не найдено.' : 'Пока нет аккаунтов.'));
     ids.forEach(function (id) {
-      var li = el('li'); li.appendChild(el('span', 'nm', nameOf(id)));
+      var li = el('li'), nm = el('span', 'nm'), nbt = el('button', 'namebtn', nameOf(id)); nbt.type = 'button'; nbt.onclick = function () { openProfile(id); }; nm.appendChild(nbt); li.appendChild(nm);
       if (isVer(id)) li.appendChild(badge());
       if (isBanned(id)) li.appendChild(el('span', 'tag', 'заблокирован'));
       if (isMod()) {
@@ -318,12 +319,19 @@
   function setTab(t) {
     S.tab = t;
     Array.prototype.forEach.call($('tabs').querySelectorAll('button'), function (b) { b.setAttribute('aria-selected', b.getAttribute('data-tab') === t ? 'true' : 'false'); });
-    $('pane-feed').hidden = t !== 'feed'; $('pane-dm').hidden = t !== 'dm'; $('pane-mod').hidden = t !== 'mod';
+    $('pane-feed').hidden = t !== 'feed'; $('pane-dm').hidden = t !== 'dm'; $('pane-mod').hidden = t !== 'mod'; $('pane-profile').hidden = t !== 'profile';
+    if (t === 'profile') { renderProfileTab(); if (me) $('name-input').value = nameOf(me.uid); }
     if (t === 'dm') markSeen();
   }
   $('tabs').addEventListener('click', function (e) { var b = e.target.closest ? e.target.closest('button[data-tab]') : null; if (b) setTab(b.getAttribute('data-tab')); });
 
   /* ---------- лента ---------- */
+  $('feed-tabs').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-sub]') : null; if (!b) return;
+    S.sub = b.getAttribute('data-sub');
+    Array.prototype.forEach.call($('feed-tabs').querySelectorAll('button'), function (x) { x.setAttribute('aria-selected', x === b ? 'true' : 'false'); });
+    S.dirty = false; renderFeed();
+  });
   var postText = $('post-text');
   postText.addEventListener('input', function () { $('post-left').textContent = 500 - postText.value.length; });
   function canPost() { return mailOk() && !isBanned(me.uid); }
@@ -418,7 +426,13 @@
     if (!S.posts.length) { box.appendChild(el('p', 'cmuted', 'Лента пуста. Напишите первый пост.')); return; }
     var counts = {}, mine = {};
     S.likes.forEach(function (l) { counts[l.pid] = (counts[l.pid] || 0) + 1; if (l.uid === me.uid) mine[l.pid] = 1; });
-    S.posts.forEach(function (p) {
+    var list = S.posts.slice();
+    if (S.sub === 'popular') {
+      list = list.filter(function (p) { return counts[p.id]; });
+      list.sort(function (x, y) { return (counts[y.id] - counts[x.id]) || (y.ts - x.ts); });
+      if (!list.length) { box.appendChild(el('p', 'cmuted', 'Пока нет постов с лайками.')); return; }
+    } else list.sort(function (x, y) { return y.ts - x.ts; });
+    list.forEach(function (p) {
       var card = el('article', 'post'), head = el('div', 'head');
       head.appendChild(whoEl(p.uid)); head.appendChild(el('span', 'cmuted', when(p.ts)));
       card.appendChild(head); card.appendChild(el('p', 'body', p.text));
@@ -474,6 +488,54 @@
       acts.appendChild(x); card.appendChild(acts); box.appendChild(card);
     });
   }
+
+  /* ---------- профиль ---------- */
+  function profileBlock(id) {
+    var box = el('div', 'prof'), u = S.users[id] || {};
+    var w = el('div', 'who'); w.appendChild(el('span', null, nameOf(id))); if (isVer(id)) w.appendChild(badge()); box.appendChild(w);
+    var mine = S.posts.filter(function (p) { return p.uid === id; }).sort(function (x, y) { return y.ts - x.ts; });
+    var likes = 0; S.likes.forEach(function (l) { var pid = l.pid; if (mine.some(function (p) { return p.id === pid; })) likes++; });
+    var st = el('div', 'stats');
+    if (u.ts) st.appendChild(el('span', null, 'На сайте с ' + new Date(u.ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })));
+    st.appendChild(el('span', null, 'Постов: ' + mine.length)); st.appendChild(el('span', null, 'Лайков: ' + likes));
+    if (isBanned(id)) st.appendChild(el('span', 'tag', 'заблокирован'));
+    box.appendChild(st);
+    if (!mine.length) box.appendChild(el('p', 'cmuted', 'Постов пока нет.'));
+    mine.slice(0, 10).forEach(function (p) { var d = el('div', 'pp', p.text); d.appendChild(el('time', null, when(p.ts))); box.appendChild(d); });
+    return box;
+  }
+  function openProfile(id) {
+    if (!me) return;
+    lastFocus = document.activeElement;
+    show('<h2 id="dlg-title">Профиль</h2><div id="d-prof"></div><div class="row"><button type="button" id="d-close">Закрыть</button></div>');
+    $('d-prof').appendChild(profileBlock(id)); $('d-close').onclick = close;
+    var row = dialog.querySelector('.row');
+    if (id !== me.uid) {
+      var wr = el('button', 'primary', 'Написать'); wr.type = 'button';
+      wr.onclick = function () { close(); S.peer = id; dmQ.value = ''; setTab('dm'); renderContacts(); renderThread(); };
+      row.appendChild(wr);
+    } else {
+      var ed = el('button', 'primary', 'Настройки'); ed.type = 'button';
+      ed.onclick = function () { close(); setTab('profile'); }; row.appendChild(ed);
+    }
+  }
+  function renderProfileTab() {
+    var box = $('my-profile'); if (!me || !box) return;
+    box.textContent = ''; box.appendChild(profileBlock(me.uid));
+  }
+  $('name-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var err = $('name-err'), msg = $('name-msg'), name = $('name-input').value.trim().replace(/\s+/g, ' '); err.textContent = ''; msg.textContent = '';
+    if (name.length < 2 || name.length > 24) { err.textContent = 'Имя: от 2 до 24 символов.'; return; }
+    if (name === nameOf(me.uid)) { msg.textContent = 'Имя не изменилось.'; return; }
+    $('name-btn').disabled = true;
+    try {
+      await db.collection('users').doc(me.uid).update({ name: name });
+      try { await me.updateProfile({ displayName: name }); } catch (x) {}
+      msg.textContent = 'Имя сохранено.';
+    } catch (ex) { err.textContent = dbMsg(ex, 'Не удалось сохранить имя. Попробуйте ещё раз.'); }
+    $('name-btn').disabled = false;
+  });
 
   /* ---------- личные сообщения ---------- */
   function unreadFor(peer) { return S.msgs.filter(function (m) { return m.from === peer && m.to === me.uid && m.ts > (S.seen[peer] || 0); }).length; }
@@ -542,7 +604,7 @@
 
   function renderAll() {
     renderAccounts(); setStatus();
-    if (me && configured) { renderFeed(); renderMod(); renderContacts(); renderThread(); updateBadges(); }
+    if (me && configured) { renderFeed(); renderMod(); renderContacts(); renderThread(); updateBadges(); if (S.tab === 'profile') renderProfileTab(); }
   }
   renderAccounts();
 })();
