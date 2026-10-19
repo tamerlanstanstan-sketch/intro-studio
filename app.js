@@ -8,6 +8,56 @@
   function $(id) { return document.getElementById(id); }
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function noop() {}
+  function linkify(node, text) {
+    var re = /https?:\/\/[^\s<>"']+/g, last = 0, m;
+    text = String(text);
+    while ((m = re.exec(text))) {
+      var url = m[0].replace(/[.,;:!?)\]]+$/, '');
+      if (m.index > last) node.appendChild(document.createTextNode(text.slice(last, m.index)));
+      var a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer nofollow'; a.textContent = url; node.appendChild(a);
+      last = m.index + url.length; re.lastIndex = last;
+    }
+    if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
+    return node;
+  }
+  var BASE_TITLE = document.title.replace(/^\(\d+\)\s*/, '');
+
+  /* ---------- запрещённые слова (только для постов, комментариев и имён; личные сообщения не проверяются) ---------- */
+  var LAT = { a: 'а', b: 'в', c: 'с', e: 'е', h: 'н', k: 'к', m: 'м', o: 'о', p: 'р', t: 'т', x: 'х', y: 'у', u: 'и', i: 'и', r: 'р', w: 'ш', '0': 'о', '3': 'з', '6': 'б', '@': 'а', '$': 'с' };
+  var RU_BAD = [
+    /хуй|хуе|хуя|хуи|хую|хуё/, /пизд|пзд[еёц]/, /бляд|^(вы|на|по|за|с|об)?бля(т|ть|ти)?$/, /^(на|за|вы|съ|с|по|до|от|у|о|об|раз|рас|под|пере|при|недо)?[её]б(а|ы|у|и|е|ё|л|н|о|к|т)/,
+    /муда[кч]|мудил|мудозвон/, /гандон|гондон/, /залуп/, /^(на|по|за)?хер(а|у|ом|е|ня|ню|и|ов|овый|овина)?$/, /пидор|пидар|пидр|педик|педераст/,
+    /шлюх|шалав|проститутк/, /^дроч/, /говн|говён/, /^сук(а|и|у|е|ой|ам|ами|ах|ин|ины)$/, /ублюд/, /сволоч/, /^мраз(ь|и|ей|ота|отой)$/,
+    /^твар(ь|и|ей|ям|ью)$/, /^идиот/, /^дебил/, /^кретин/, /^тупиц/, /придур/, /имбецил/, /^урод(ы|а|у|ом|ина|ки)?$/, /^ничтожеств/, /^скотин/, /^быдл/,
+    /^гнид/, /^падл/, /^чмо$/, /^лох(и|а|у|ом|ов)?$/, /^жид(ы|ов|ам|ами|ах)?$/, /^чурк/, /^чурбан/, /черножоп/, /^хач(и|ей|ам|ами)?$/, /нигг?ер/, /^нигга/, /^пошел(на)?нах/, /^иди(на)?нах/, /^отсос/, /^сос(и|ать)$/
+  ];
+  var EN_BAD = /^(fuck\w*|f+u+c+k+\w*|shit\w*|bitch\w*|cunt\w*|asshole\w*|nigg\w+|faggot\w*|whore\w*|slut\w*|bastard\w*|retard\w*|motherfuck\w*|dickhead\w*|wanker\w*|blya[td]\w*|pizd\w*|suka|ebat\w*|ebal\w*|huy\w*|hui|nahui|pidor\w*|pidar\w*)$/;
+  function collapse(s) { return s.replace(/(.)\1+/g, '$1'); }
+  function hasBadWord(text) {
+    var low = String(text || '').toLowerCase().replace(/ё/g, 'е');
+    var tokens = low.split(/\s+/).filter(Boolean), cand = [], run = [];
+    function flush() { if (run.length >= 3) cand.push(run.join('')); run = []; }
+    tokens.forEach(function (t) {
+      var core = t.replace(/[^a-zа-я0-9@$]/g, '');
+      if (!core) return;
+      cand.push(core);
+      if (core.length === 1) run.push(core); else flush();
+    });
+    flush();
+    /* слитное написание без пробелов: "п.и.з.д.а" -> пизда уже учтено выше через удаление знаков */
+    for (var i = 0; i < cand.length; i++) {
+      var w = cand[i], ru = w.replace(/[a-z0-9@$]/g, function (ch) { return LAT[ch] || ch; });
+      var en = w.replace(/[103@$]/g, function (ch) { return { '1': 'i', '0': 'o', '3': 'e', '@': 'a', '$': 's' }[ch]; });
+      var forms = [w, collapse(w), en, collapse(en), ru, collapse(ru)];
+      for (var j = 0; j < forms.length; j++) {
+        var f = forms[j].replace(/ё/g, 'е');
+        if (EN_BAD.test(f)) return true;
+        for (var k = 0; k < RU_BAD.length; k++) if (RU_BAD[k].test(f) || RU_BAD[k].test(f.replace(/е/g, 'ё'))) return true;
+      }
+    }
+    return false;
+  }
+  var BAD_MSG = 'В тексте есть запрещённые слова: мат или оскорбления. Уберите их и попробуйте снова.';
   function lsGet(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
   function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
@@ -24,10 +74,15 @@
 
   var me = null;
   var S = { users: {}, verified: {}, banned: {}, posts: [], likes: [], comments: [], msgs: [], reports: [], subs: [],
-    tab: 'feed', sub: 'new', peer: null, open: {}, drafts: {}, seen: {}, reported: {}, dirty: false, modTried: false, dbErr: false, reportsOn: false };
+    tab: 'feed', sub: 'new', saved: {}, feedLimit: 20, lastPost: 0, peer: null, open: {}, drafts: {}, seen: {}, reported: {}, dirty: false, modTried: false, dbErr: false, reportsOn: false };
 
   function toMs(t) { return t && t.toMillis ? t.toMillis() : (typeof t === 'number' ? t : Date.now()); }
-  function when(ts) { return new Date(ts).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
+  function when(ts) {
+    var d = Date.now() - ts;
+    if (d > -60000 && d < 60000) return 'только что';
+    if (d >= 60000 && d < 3600000) return Math.floor(d / 60000) + ' мин назад';
+    return new Date(ts).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  }
   function mailOk() { return !!(me && me.emailVerified); }
   function isMod() { return !!(me && me.emailVerified && me.email && me.email.toLowerCase() === MOD_EMAIL); }
   function isVer(id) { return !!S.verified[id]; }
@@ -39,8 +94,15 @@
     s.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#1d9bf0" d="M12 1.6l2.6 1.9 3.2-.2 1.1 3 2.6 1.9-1 3.1 1 3.1-2.6 1.9-1.1 3-3.2-.2L12 22.4l-2.6-1.9-3.2.2-1.1-3L2.5 15.8l1-3.1-1-3.1 2.6-1.9 1.1-3 3.2.2z"/><path fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M7.6 12.4l3 3 5.8-6.3"/></svg>';
     return s;
   }
+  function avatar(id, big) {
+    var n = nameOf(id).trim(), h = 0, i;
+    for (i = 0; i < String(id).length; i++) h = (h * 31 + String(id).charCodeAt(i)) % 360;
+    var s = el('span', 'av' + (big ? ' big' : ''), (n.charAt(0) || '?').toUpperCase());
+    s.style.background = 'hsl(' + h + ',45%,38%)'; s.setAttribute('aria-hidden', 'true');
+    return s;
+  }
   function whoEl(id) {
-    var w = el('span', 'who'), nb = el('button', 'namebtn', nameOf(id)); nb.type = 'button'; nb.title = 'Открыть профиль';
+    var w = el('span', 'who'); w.appendChild(avatar(id)); var nb = el('button', 'namebtn', nameOf(id)); nb.type = 'button'; nb.title = 'Открыть профиль';
     nb.addEventListener('click', function () { openProfile(id); }); w.appendChild(nb);
     if (isVer(id)) w.appendChild(badge());
     return w;
@@ -113,6 +175,7 @@
       var name = $('f-name').value.trim(), email = $('f-email').value.trim(), pw = $('f-pw').value, pw2 = $('f-pw2').value, err = $('d-err');
       err.textContent = '';
       if (name.length < 2) { err.textContent = 'Введите имя, минимум 2 символа.'; return; }
+      if (hasBadWord(name)) { err.textContent = BAD_MSG; return; }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { err.textContent = 'Проверьте почту: нужен адрес вида name@mail.ru.'; return; }
       if (pw.length < 8) { err.textContent = 'Пароль должен быть не короче 8 символов.'; return; }
       if (pw !== pw2) { err.textContent = 'Пароли не совпадают.'; return; }
@@ -213,9 +276,11 @@
     box.textContent = 'Нет доступа к базе данных' + (e && e.code ? ' (' + e.code + ')' : '') + '. Проверьте, что в Firebase создан Firestore и опубликованы правила из файла firestore.rules (подробности в README.md).';
     if (window.console) console.error(e);
   }
-  function stopSubs() { S.subs.forEach(function (u) { try { u(); } catch (e) {} }); S.subs = []; S.users = {}; S.verified = {}; S.banned = {}; S.posts = []; S.likes = []; S.comments = []; S.msgs = []; S.reports = []; S.peer = null; S.modTried = false; S.reportsOn = false; }
+  function stopSubs() { S.subs.forEach(function (u) { try { u(); } catch (e) {} }); S.subs = []; S.users = {}; S.verified = {}; S.banned = {}; S.posts = []; S.likes = []; S.comments = []; S.msgs = []; S.reports = []; S.peer = null; S.modTried = false; S.reportsOn = false; document.title = BASE_TITLE; }
   function startSubs() {
     var uid = me.uid, est = { serverTimestamps: 'estimate' };
+    S.saved = lsGet('saved-' + uid, {});
+    if (!postText.value) { postText.value = lsGet('draft-' + uid, ''); $('post-left').textContent = 500 - postText.value.length; }
     S.seen = lsGet('seen-' + uid, {}); S.reported = lsGet('rep-' + uid, {});
     S.subs.push(db.collection('users').onSnapshot(function (s) {
       S.users = {}; s.forEach(function (d) { var x = d.data(est); S.users[d.id] = { name: x.name, ts: x.createdAt ? toMs(x.createdAt) : 0 }; }); renderAll();
@@ -229,7 +294,7 @@
       S.banned = {}; s.forEach(function (d) { S.banned[d.id] = 1; }); $('banned').hidden = !(me && S.banned[me.uid]); renderAll();
     }, onErr));
     S.subs.push(db.collection('posts').orderBy('ts', 'desc').limit(100).onSnapshot(function (s) {
-      S.posts = []; s.forEach(function (d) { var x = d.data(est); S.posts.push({ id: d.id, uid: x.uid, text: x.text, ts: toMs(x.ts) }); }); renderFeed(); renderMod();
+      S.posts = []; s.forEach(function (d) { var x = d.data(est); S.posts.push({ id: d.id, uid: x.uid, text: x.text, ts: toMs(x.ts), edited: x.edited ? toMs(x.edited) : 0 }); }); renderFeed(); renderMod();
     }, onErr));
     S.subs.push(db.collection('likes').limit(3000).onSnapshot(function (s) {
       S.likes = []; s.forEach(function (d) { var x = d.data(); S.likes.push({ id: d.id, pid: x.pid, uid: x.uid }); }); renderFeed();
@@ -326,14 +391,16 @@
   $('tabs').addEventListener('click', function (e) { var b = e.target.closest ? e.target.closest('button[data-tab]') : null; if (b) setTab(b.getAttribute('data-tab')); });
 
   /* ---------- лента ---------- */
+  $('feed-search').addEventListener('input', function () { S.feedLimit = 20; renderFeed(); });
   $('feed-tabs').addEventListener('click', function (e) {
     var b = e.target.closest ? e.target.closest('button[data-sub]') : null; if (!b) return;
-    S.sub = b.getAttribute('data-sub');
+    S.sub = b.getAttribute('data-sub'); S.feedLimit = 20;
     Array.prototype.forEach.call($('feed-tabs').querySelectorAll('button'), function (x) { x.setAttribute('aria-selected', x === b ? 'true' : 'false'); });
     S.dirty = false; renderFeed();
   });
   var postText = $('post-text');
-  postText.addEventListener('input', function () { $('post-left').textContent = 500 - postText.value.length; });
+  postText.addEventListener('keydown', function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !$('post-btn').disabled) { e.preventDefault(); $('post-btn').click(); } });
+  postText.addEventListener('input', function () { $('post-left').textContent = 500 - postText.value.length; if (me) lsSet('draft-' + me.uid, postText.value); });
   function canPost() { return mailOk() && !isBanned(me.uid); }
   function composerState() {
     var note = $('verify-note'), can = !!me && canPost();
@@ -347,10 +414,14 @@
     e.preventDefault();
     var err = $('post-err'), text = postText.value.trim(); err.textContent = '';
     if (!text) { err.textContent = 'Напишите текст поста.'; return; }
+    if (hasBadWord(text)) { err.textContent = BAD_MSG; return; }
+    var wait = 10000 - (Date.now() - (S.lastPost || 0));
+    if (wait > 0) { err.textContent = 'Подождите ' + Math.ceil(wait / 1000) + ' сек. перед следующим постом.'; return; }
+    if (S.posts.some(function (p) { return p.uid === me.uid && p.text === text && Date.now() - p.ts < 3600000; })) { err.textContent = 'Такой пост вы уже публиковали.'; return; }
     $('post-btn').disabled = true;
     try {
       await db.collection('posts').add({ uid: me.uid, text: text, ts: FV.serverTimestamp() });
-      postText.value = ''; $('post-left').textContent = '500';
+      S.lastPost = Date.now(); postText.value = ''; $('post-left').textContent = '500'; lsSet('draft-' + me.uid, '');
     } catch (ex) { err.textContent = dbMsg(ex, 'Не удалось опубликовать. Попробуйте ещё раз.'); }
     composerState();
   });
@@ -394,7 +465,9 @@
       inp.value = S.drafts[p.id] || ''; inp.addEventListener('input', function () { S.drafts[p.id] = inp.value; });
       var ok = el('button', 'cbtn primary', 'Отправить'); ok.type = 'submit'; f.appendChild(inp); f.appendChild(ok);
       f.addEventListener('submit', async function (e) {
-        e.preventDefault(); var t = inp.value.trim(); if (!t) return; ok.disabled = true;
+        e.preventDefault(); var t = inp.value.trim(); if (!t) return;
+        if (hasBadWord(t)) { $('post-err').textContent = BAD_MSG; return; }
+        ok.disabled = true;
         try { await db.collection('comments').add({ pid: p.id, uid: me.uid, text: t, ts: FV.serverTimestamp() }); S.drafts[p.id] = ''; inp.value = ''; }
         catch (ex) { $('post-err').textContent = dbMsg(ex, 'Не удалось отправить комментарий.'); }
         ok.disabled = false;
@@ -404,6 +477,22 @@
     return box;
   }
   $('feed').addEventListener('focusout', function () { if (S.dirty) { S.dirty = false; setTimeout(renderFeed, 0); } });
+  function openEdit(card, acts, p) {
+    acts.hidden = true;
+    var box = el('div', 'rep'), ta = el('textarea'); ta.maxLength = 500; ta.rows = 3; ta.value = p.text; ta.setAttribute('aria-label', 'Текст поста'); ta.style.width = '100%';
+    var err = el('p', 'cerr'), ok = el('button', 'cbtn primary', 'Сохранить'), no = el('button', 'cbtn', 'Отмена'); ok.type = 'button'; no.type = 'button';
+    no.onclick = function () { box.parentNode.removeChild(box); acts.hidden = false; if (S.dirty) { S.dirty = false; renderFeed(); } };
+    ok.onclick = async function () {
+      var t = ta.value.trim(); err.textContent = '';
+      if (!t) { err.textContent = 'Текст не может быть пустым.'; return; }
+      if (hasBadWord(t)) { err.textContent = BAD_MSG; return; }
+      if (t === p.text) { no.onclick(); return; }
+      ok.disabled = true;
+      try { await db.collection('posts').doc(p.id).update({ text: t, edited: FV.serverTimestamp() }); S.dirty = false; }
+      catch (e) { ok.disabled = false; err.textContent = dbMsg(e, 'Не удалось сохранить. Если вы только что обновили сайт, опубликуйте новые правила из firestore.rules.'); }
+    };
+    box.appendChild(ta); box.appendChild(ok); box.appendChild(no); box.appendChild(err); card.appendChild(box); ta.focus();
+  }
   function openReport(card, acts, p) {
     acts.hidden = true;
     var rep = el('div', 'rep'), sel = el('select'); sel.setAttribute('aria-label', 'Причина жалобы');
@@ -431,16 +520,27 @@
       list = list.filter(function (p) { return counts[p.id]; });
       list.sort(function (x, y) { return (counts[y.id] - counts[x.id]) || (y.ts - x.ts); });
       if (!list.length) { box.appendChild(el('p', 'cmuted', 'Пока нет постов с лайками.')); return; }
+    } else if (S.sub === 'saved') {
+      list = list.filter(function (p) { return S.saved[p.id]; }).sort(function (x, y) { return y.ts - x.ts; });
+      if (!list.length) { box.appendChild(el('p', 'cmuted', 'Нет сохранённых постов. Нажмите «☆ Сохранить» под постом.')); return; }
     } else list.sort(function (x, y) { return y.ts - x.ts; });
+    var fq = ($('feed-search').value || '').trim().toLowerCase();
+    if (fq) {
+      list = list.filter(function (p) { return p.text.toLowerCase().indexOf(fq) !== -1 || nameOf(p.uid).toLowerCase().indexOf(fq) !== -1; });
+      if (!list.length) { box.appendChild(el('p', 'cmuted', 'Ничего не найдено.')); return; }
+    }
+    var total = list.length; list = list.slice(0, S.feedLimit);
     list.forEach(function (p) {
       var card = el('article', 'post'), head = el('div', 'head');
-      head.appendChild(whoEl(p.uid)); head.appendChild(el('span', 'cmuted', when(p.ts)));
-      card.appendChild(head); card.appendChild(el('p', 'body', p.text));
+      head.appendChild(whoEl(p.uid)); head.appendChild(el('span', 'cmuted', when(p.ts) + (p.edited ? ' · изменено' : '')));
+      card.appendChild(head); card.appendChild(linkify(el('p', 'body'), p.text));
       var acts = el('div', 'acts');
       var like = el('button', 'cbtn' + (mine[p.id] ? ' on' : ''), (mine[p.id] ? '♥ ' : '♡ ') + (counts[p.id] || 0));
       like.type = 'button'; like.setAttribute('aria-pressed', mine[p.id] ? 'true' : 'false'); like.setAttribute('aria-label', 'Нравится');
       like.disabled = !canPost();
       like.addEventListener('click', function () { toggleLike(p.id); }); acts.appendChild(like);
+      var sv = el('button', 'cbtn' + (S.saved[p.id] ? ' on' : ''), S.saved[p.id] ? '★ Сохранено' : '☆ Сохранить'); sv.type = 'button'; sv.setAttribute('aria-pressed', S.saved[p.id] ? 'true' : 'false');
+      sv.addEventListener('click', function () { if (S.saved[p.id]) delete S.saved[p.id]; else S.saved[p.id] = 1; lsSet('saved-' + me.uid, S.saved); renderFeed(); }); acts.appendChild(sv);
       var nc = commentsFor(p.id).length;
       var cb = el('button', 'cbtn' + (S.open[p.id] ? ' on' : ''), 'Комментарии' + (nc ? ' (' + nc + ')' : '')); cb.type = 'button'; cb.setAttribute('aria-expanded', S.open[p.id] ? 'true' : 'false');
       cb.addEventListener('click', function () { S.open[p.id] = !S.open[p.id]; renderFeed(); }); acts.appendChild(cb);
@@ -449,12 +549,20 @@
         if (S.reported[p.id]) rb.disabled = true;
         rb.addEventListener('click', function () { openReport(card, acts, p); }); acts.appendChild(rb);
       }
+      if (p.uid === me.uid && canPost()) {
+        var eb = el('button', 'cbtn', 'Изменить'); eb.type = 'button';
+        eb.addEventListener('click', function () { openEdit(card, acts, p); }); acts.appendChild(eb);
+      }
       if (p.uid === me.uid || isMod()) {
         var del = el('button', 'cbtn danger', 'Удалить'); del.type = 'button';
         sureClick(del, 'Точно удалить?', function () { deletePost(p); }); acts.appendChild(del);
       }
       card.appendChild(acts); if (S.open[p.id]) card.appendChild(commentPanel(p)); box.appendChild(card);
     });
+    if (total > list.length) {
+      var more = el('button', 'cbtn', 'Показать ещё (' + (total - list.length) + ')'); more.type = 'button';
+      more.onclick = function () { S.feedLimit += 20; renderFeed(); }; box.appendChild(more);
+    }
   }
 
   /* ---------- жалобы (модератор) ---------- */
@@ -492,7 +600,7 @@
   /* ---------- профиль ---------- */
   function profileBlock(id) {
     var box = el('div', 'prof'), u = S.users[id] || {};
-    var w = el('div', 'who'); w.appendChild(el('span', null, nameOf(id))); if (isVer(id)) w.appendChild(badge()); box.appendChild(w);
+    var w = el('div', 'who'); w.appendChild(avatar(id, true)); w.appendChild(el('span', null, nameOf(id))); if (isVer(id)) w.appendChild(badge()); box.appendChild(w);
     var mine = S.posts.filter(function (p) { return p.uid === id; }).sort(function (x, y) { return y.ts - x.ts; });
     var likes = 0; S.likes.forEach(function (l) { var pid = l.pid; if (mine.some(function (p) { return p.id === pid; })) likes++; });
     var st = el('div', 'stats');
@@ -527,6 +635,7 @@
     e.preventDefault();
     var err = $('name-err'), msg = $('name-msg'), name = $('name-input').value.trim().replace(/\s+/g, ' '); err.textContent = ''; msg.textContent = '';
     if (name.length < 2 || name.length > 24) { err.textContent = 'Имя: от 2 до 24 символов.'; return; }
+    if (hasBadWord(name)) { err.textContent = BAD_MSG; return; }
     if (name === nameOf(me.uid)) { msg.textContent = 'Имя не изменилось.'; return; }
     $('name-btn').disabled = true;
     try {
@@ -548,15 +657,18 @@
   function updateBadges() {
     if (!me) return;
     var total = 0; Object.keys(S.users).forEach(function (p) { if (p !== me.uid) total += unreadFor(p); });
+    document.title = (total ? '(' + total + ') ' : '') + BASE_TITLE;
     var c = $('dm-count'); c.textContent = ''; if (total) { c.className = 'cnt'; c.textContent = total; } else c.className = '';
     renderContacts();
   }
   var dmQ = $('dm-search');
   dmQ.addEventListener('input', renderContacts);
   function lastTs(id) { var t = 0; S.msgs.forEach(function (m) { if ((m.from === id || m.to === id) && m.ts > t) t = m.ts; }); return t; }
+  function lastMsg(id) { var r = null; S.msgs.forEach(function (m) { if ((m.from === id || m.to === id) && (!r || m.ts > r.ts)) r = m; }); return r; }
   function contactBtn(id) {
     var b = el('button', 'cbtn' + (S.peer === id ? ' on' : '')); b.type = 'button'; b.setAttribute('aria-pressed', S.peer === id ? 'true' : 'false');
-    b.appendChild(el('span', null, nameOf(id))); if (isVer(id)) b.appendChild(badge());
+    b.appendChild(avatar(id)); b.appendChild(el('span', null, nameOf(id))); if (isVer(id)) b.appendChild(badge());
+    var lm = lastMsg(id); if (lm) b.appendChild(el('span', 'prev', (lm.from === me.uid ? 'Вы: ' : '') + lm.text.slice(0, 28) + (lm.text.length > 28 ? '…' : '')));
     var un = unreadFor(id); if (un) b.appendChild(el('span', 'cnt', String(un)));
     b.onclick = function () { S.peer = id; $('dm-err').textContent = ''; renderContacts(); renderThread(); };
     return b;
@@ -587,8 +699,9 @@
     var msgs = S.msgs.filter(function (m) { return (m.from === S.peer && m.to === me.uid) || (m.from === me.uid && m.to === S.peer); });
     msgs.sort(function (a, b) { return a.ts - b.ts; });
     box.textContent = '';
+    var hd = el('div', 'thead'); hd.appendChild(el('span', 'cmuted', 'Чат с ')); hd.appendChild(whoEl(S.peer)); box.appendChild(hd);
     if (!msgs.length) box.appendChild(el('p', 'cmuted', canPost() ? 'Сообщений пока нет. Напишите первым.' : 'Подтвердите почту, чтобы писать сообщения.'));
-    msgs.forEach(function (m) { var d = el('div', 'msg' + (m.from === me.uid ? ' me' : ''), m.text); d.appendChild(el('time', null, when(m.ts))); box.appendChild(d); });
+    msgs.forEach(function (m) { var d = linkify(el('div', 'msg' + (m.from === me.uid ? ' me' : '')), m.text); d.appendChild(el('time', null, when(m.ts))); box.appendChild(d); });
     box.scrollTop = box.scrollHeight;
     markSeen();
   }

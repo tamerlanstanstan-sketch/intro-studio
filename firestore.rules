@@ -41,6 +41,12 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid
         && okText(request.resource.data.text, 500)
         && request.resource.data.ts == request.time;
+      allow update: if canWrite()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'edited'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasAll(['text', 'edited'])
+        && okText(request.resource.data.text, 500)
+        && request.resource.data.edited == request.time;
       allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isMod());
     }
 
