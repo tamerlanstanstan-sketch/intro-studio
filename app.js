@@ -8,6 +8,12 @@
   function $(id) { return document.getElementById(id); }
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function noop() {}
+  var PREFS = lsGet('prefs', {});
+  function applyPrefs() {
+    document.documentElement.setAttribute('data-theme', PREFS.theme === 'light' ? 'light' : 'dark');
+    document.documentElement.setAttribute('data-size', PREFS.size === 'large' ? 'large' : 'normal');
+  }
+  applyPrefs();
   function linkify(node, text) {
     var re = /https?:\/\/[^\s<>"']+/g, last = 0, m;
     text = String(text);
@@ -65,7 +71,7 @@
   var configured = !!(window.firebase && cfgFilled);
   var notConfMsg = cfgFilled
     ? 'Не загрузились скрипты Firebase. Проверьте интернет, отключите блокировщик рекламы и обновите страницу.'
-    : 'Сайт ещё не подключён к Firebase: откройте firebase-config.js и вставьте настройки проекта (шаги в README.md).';
+    : 'Сайт ещё не подключён к Firebase: откройте js/firebase-config.js и вставьте настройки проекта (шаги в README.md).';
   var auth = null, db = null, FV = null;
   if (configured) {
     try { firebase.initializeApp(CFG); auth = firebase.auth(); db = firebase.firestore(); FV = firebase.firestore.FieldValue; }
@@ -74,7 +80,7 @@
 
   var me = null;
   var S = { users: {}, verified: {}, banned: {}, posts: [], likes: [], comments: [], msgs: [], reports: [], subs: [],
-    tab: 'feed', sub: 'new', saved: {}, feedLimit: 20, lastPost: 0, peer: null, open: {}, drafts: {}, seen: {}, reported: {}, dirty: false, modTried: false, dbErr: false, reportsOn: false };
+    tab: 'feed', sub: 'new', saved: {}, presence: {}, ann: null, admLimit: 20, feedLimit: 20, lastPost: 0, peer: null, open: {}, drafts: {}, seen: {}, reported: {}, dirty: false, modTried: false, dbErr: false, reportsOn: false };
 
   function toMs(t) { return t && t.toMillis ? t.toMillis() : (typeof t === 'number' ? t : Date.now()); }
   function when(ts) {
@@ -97,18 +103,14 @@
   function avatar(id, big) {
     var n = nameOf(id).trim(), h = 0, i;
     for (i = 0; i < String(id).length; i++) h = (h * 31 + String(id).charCodeAt(i)) % 360;
-    var initial = (n.charAt(0) || '?').toUpperCase();
-    var s = el('span', 'av' + (big ? ' big' : ''));
-    s.style.background = 'hsl(' + h + ',45%,38%)'; s.setAttribute('aria-hidden', 'true');
-    function showInitial() { s.textContent = initial; }
-    var imageUrl = S.users[id] && S.users[id].avatar;
-    if (imageUrl) {
-      var img = document.createElement('img');
-      img.alt = '';
-      img.onerror = function () { if (img.parentNode === s) s.removeChild(img); showInitial(); };
-      s.appendChild(img);
-      img.src = imageUrl;
-    } else showInitial();
+    var u = S.users[id], s;
+    if (u && u.avatar) {
+      s = el('span', 'av' + (big ? ' big' : '')); var im = document.createElement('img'); im.src = u.avatar; im.alt = ''; s.appendChild(im);
+    } else {
+      s = el('span', 'av' + (big ? ' big' : ''), (n.charAt(0) || '?').toUpperCase());
+      s.style.background = 'hsl(' + h + ',45%,38%)';
+    }
+    s.setAttribute('aria-hidden', 'true');
     return s;
   }
   function whoEl(id) {
@@ -137,8 +139,8 @@
       'auth/network-request-failed': 'Нет связи с сервером. Проверьте интернет и отключите VPN или блокировщик.',
       'auth/operation-not-allowed': 'В Firebase не включён вход по почте и паролю: Authentication -> Способ входа -> Электронная почта/пароль -> Включить.',
       'auth/unauthorized-domain': 'Адрес сайта не добавлен в Firebase: Authentication -> Настройки -> Авторизованные домены -> добавьте ВАШ_ЛОГИН.github.io.',
-      'auth/invalid-api-key': 'Неверный apiKey в firebase-config.js. Скопируйте настройки из консоли Firebase заново.',
-      'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'Неверный apiKey в firebase-config.js. Скопируйте настройки из консоли Firebase заново.',
+      'auth/invalid-api-key': 'Неверный apiKey в js/firebase-config.js. Скопируйте настройки из консоли Firebase заново.',
+      'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'Неверный apiKey в js/firebase-config.js. Скопируйте настройки из консоли Firebase заново.',
       'auth/configuration-not-found': 'В проекте Firebase не запущена служба Authentication: откройте Authentication и нажмите «Начать».',
       'auth/operation-not-supported-in-this-environment': 'Сайт открыт как файл с компьютера. Откройте его по адресу https:// (через GitHub Pages).',
       'auth/internal-error': 'Внутренняя ошибка Firebase. Проверьте настройки проекта и повторите.'
@@ -286,14 +288,14 @@
     box.textContent = 'Нет доступа к базе данных' + (e && e.code ? ' (' + e.code + ')' : '') + '. Проверьте, что в Firebase создан Firestore и опубликованы правила из файла firestore.rules (подробности в README.md).';
     if (window.console) console.error(e);
   }
-  function stopSubs() { S.subs.forEach(function (u) { try { u(); } catch (e) {} }); S.subs = []; S.users = {}; S.verified = {}; S.banned = {}; S.posts = []; S.likes = []; S.comments = []; S.msgs = []; S.reports = []; S.peer = null; S.modTried = false; S.reportsOn = false; document.title = BASE_TITLE; }
+  function stopSubs() { S.subs.forEach(function (u) { try { u(); } catch (e) {} }); S.subs = []; S.users = {}; S.verified = {}; S.banned = {}; S.posts = []; S.likes = []; S.comments = []; S.msgs = []; S.reports = []; S.peer = null; S.modTried = false; S.reportsOn = false; S.msgsReady = false; S.presence = {}; S.ann = null; document.title = BASE_TITLE; }
   function startSubs() {
     var uid = me.uid, est = { serverTimestamps: 'estimate' };
     S.saved = lsGet('saved-' + uid, {});
     if (!postText.value) { postText.value = lsGet('draft-' + uid, ''); $('post-left').textContent = 500 - postText.value.length; }
     S.seen = lsGet('seen-' + uid, {}); S.reported = lsGet('rep-' + uid, {});
     S.subs.push(db.collection('users').onSnapshot(function (s) {
-      S.users = {}; s.forEach(function (d) { var x = d.data(est); S.users[d.id] = { name: x.name, avatar: typeof x.avatar === 'string' ? x.avatar : '', ts: x.createdAt ? toMs(x.createdAt) : 0 }; }); renderAll();
+      S.users = {}; s.forEach(function (d) { var x = d.data(est); S.users[d.id] = { name: x.name, ts: x.createdAt ? toMs(x.createdAt) : 0, bio: typeof x.bio === 'string' ? x.bio : '', avatar: (typeof x.avatar === 'string' && x.avatar.indexOf('data:image/jpeg;base64,') === 0) ? x.avatar : '' }; }); renderAll();
     }, onErr));
     S.subs.push(db.collection('verified').onSnapshot(function (s) {
       S.verified = {}; s.forEach(function (d) { S.verified[d.id] = 1; });
@@ -313,9 +315,21 @@
       S.comments = []; s.forEach(function (d) { var x = d.data(est); S.comments.push({ id: d.id, pid: x.pid, uid: x.uid, text: x.text, ts: toMs(x.ts) }); }); renderFeed(); renderMod();
     }, onErr));
     S.subs.push(db.collection('messages').where('participants', 'array-contains', uid).limit(500).onSnapshot(function (s) {
+      var firstLoad = !S.msgsReady; S.msgsReady = true;
+      if (!firstLoad) s.docChanges().forEach(function (ch) {
+        if (ch.type !== 'added' || ch.doc.metadata.hasPendingWrites) return;
+        var m = ch.doc.data(est); if (m.from && m.from !== uid) notifyMsg(m.from, m.text);
+      });
       S.msgs = []; s.forEach(function (d) { var x = d.data(est); S.msgs.push({ id: d.id, from: x.from, to: x.to, text: x.text, ts: toMs(x.ts) }); });
       renderThread(); updateBadges();
     }, onErr));
+    S.subs.push(db.collection('presence').onSnapshot(function (s) {
+      S.presence = {}; s.forEach(function (d) { var x = d.data(est); S.presence[d.id] = toMs(x.ts); }); renderStats(); if (S.tab === 'admin') renderAdmin();
+    }, noop));
+    S.subs.push(db.collection('settings').doc('announcement').onSnapshot(function (d) {
+      var x = d.exists ? d.data(est) : null; S.ann = x && x.text ? { text: x.text, ts: toMs(x.ts) } : null; renderAnn();
+    }, noop));
+    beat();
     if (isMod()) {
       S.reportsOn = true;
       S.subs.push(db.collection('reports').limit(500).onSnapshot(function (s) {
@@ -375,8 +389,13 @@
     ids.forEach(function (id) {
       var li = el('li'), nm = el('span', 'nm'), nbt = el('button', 'namebtn', nameOf(id)); nbt.type = 'button'; nbt.onclick = function () { openProfile(id); }; nm.appendChild(nbt); li.appendChild(nm);
       if (isVer(id)) li.appendChild(badge());
+      if (onlineSet()[id]) { var dt = el('span', 'dot'); dt.title = 'Онлайн'; li.appendChild(dt); }
       if (isBanned(id)) li.appendChild(el('span', 'tag', 'заблокирован'));
       if (isMod()) {
+        if (S.users[id] && S.users[id].avatar) {
+          var rav = el('button', 'mini', 'Убрать аватар'); rav.type = 'button';
+          rav.onclick = function () { db.collection('users').doc(id).update({ avatar: '' }).catch(noop); }; li.appendChild(rav);
+        }
         var vb = el('button', 'mini', isVer(id) ? 'Снять галочку' : 'Дать галочку'); vb.type = 'button';
         vb.onclick = function () { (isVer(id) ? db.collection('verified').doc(id).delete() : db.collection('verified').doc(id).set({ ts: FV.serverTimestamp() })).catch(noop); };
         li.appendChild(vb);
@@ -394,9 +413,10 @@
   function setTab(t) {
     S.tab = t;
     Array.prototype.forEach.call($('tabs').querySelectorAll('button'), function (b) { b.setAttribute('aria-selected', b.getAttribute('data-tab') === t ? 'true' : 'false'); });
-    $('pane-feed').hidden = t !== 'feed'; $('pane-dm').hidden = t !== 'dm'; $('pane-mod').hidden = t !== 'mod'; $('pane-profile').hidden = t !== 'profile';
+    $('pane-feed').hidden = t !== 'feed'; $('pane-dm').hidden = t !== 'dm'; $('pane-mod').hidden = t !== 'mod'; $('pane-profile').hidden = t !== 'profile'; $('pane-admin').hidden = t !== 'admin';
     if (t === 'profile') { renderProfileTab(); if (me) $('name-input').value = nameOf(me.uid); }
     if (t === 'dm') markSeen();
+    if (t === 'admin') renderAdmin();
   }
   $('tabs').addEventListener('click', function (e) { var b = e.target.closest ? e.target.closest('button[data-tab]') : null; if (b) setTab(b.getAttribute('data-tab')); });
 
@@ -581,8 +601,8 @@
     catch (e) { $('post-err').textContent = dbMsg(e, 'Не удалось закрыть жалобы.'); }
   }
   function renderMod() {
-    var tab = $('tab-mod'); tab.hidden = !(me && isMod());
-    if (!me || !isMod()) { if (S.tab === 'mod') setTab('feed'); return; }
+    var tab = $('tab-mod'); tab.hidden = !(me && isMod()); $('tab-admin').hidden = tab.hidden;
+    if (!me || !isMod()) { if (S.tab === 'mod' || S.tab === 'admin') setTab('feed'); return; }
     var groups = {};
     S.reports.forEach(function (r) { (groups[r.pid] = groups[r.pid] || []).push(r); });
     var ids = Object.keys(groups);
@@ -611,6 +631,7 @@
   function profileBlock(id) {
     var box = el('div', 'prof'), u = S.users[id] || {};
     var w = el('div', 'who'); w.appendChild(avatar(id, true)); w.appendChild(el('span', null, nameOf(id))); if (isVer(id)) w.appendChild(badge()); box.appendChild(w);
+    if (u.bio) box.appendChild(el('p', 'bio', u.bio));
     var mine = S.posts.filter(function (p) { return p.uid === id; }).sort(function (x, y) { return y.ts - x.ts; });
     var likes = 0; S.likes.forEach(function (l) { var pid = l.pid; if (mine.some(function (p) { return p.id === pid; })) likes++; });
     var st = el('div', 'stats');
@@ -632,72 +653,92 @@
       var wr = el('button', 'primary', 'Написать'); wr.type = 'button';
       wr.onclick = function () { close(); S.peer = id; dmQ.value = ''; setTab('dm'); renderContacts(); renderThread(); };
       row.appendChild(wr);
+      if (isMod() && S.users[id] && S.users[id].avatar) {
+        var ra = el('button', null, 'Убрать аватар'); ra.type = 'button';
+        ra.onclick = function () { db.collection('users').doc(id).update({ avatar: '' }).then(close, noop); }; row.appendChild(ra);
+      }
     } else {
       var ed = el('button', 'primary', 'Настройки'); ed.type = 'button';
       ed.onclick = function () { close(); setTab('profile'); }; row.appendChild(ed);
     }
   }
+  /* ---------- уведомления о сообщениях ---------- */
+  function notifSupported() { return typeof Notification !== 'undefined'; }
+  function notifOn() { return !!(me && notifSupported() && Notification.permission === 'granted' && lsGet('notif-' + me.uid, 0)); }
+  function updateNotifUI() {
+    var b = $('notif-btn'), m = $('notif-msg'); if (!b || !me) return;
+    b.disabled = false;
+    if (!notifSupported()) { b.disabled = true; m.textContent = 'Этот браузер не поддерживает уведомления. На iPhone добавьте сайт на экран «Домой» и откройте оттуда.'; return; }
+    if (Notification.permission === 'denied') { b.disabled = true; m.textContent = 'Уведомления запрещены в настройках браузера для этого сайта. Разрешите их там и обновите страницу.'; return; }
+    if (notifOn()) { b.textContent = 'Выключить уведомления'; m.textContent = 'Включены: придёт уведомление о новом сообщении, пока сайт открыт в браузере (можно в фоне).'; }
+    else { b.textContent = 'Включить уведомления'; m.textContent = 'Выключены.'; }
+  }
+  function showNote(title, body, tag) {
+    var opts = { body: body, tag: tag, renotify: true, icon: undefined };
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+        navigator.serviceWorker.getRegistration().then(function (reg) {
+          if (reg && reg.showNotification) reg.showNotification(title, opts);
+          else { var n = new Notification(title, opts); n.onclick = function () { window.focus(); n.close(); }; }
+        }).catch(function () { try { new Notification(title, opts); } catch (e) {} });
+      } else { var n2 = new Notification(title, opts); n2.onclick = function () { window.focus(); n2.close(); }; }
+    } catch (e) {}
+  }
+  function notifyMsg(from, text) {
+    if (!notifOn() || isBanned(from)) return;
+    if (!document.hidden && document.hasFocus && document.hasFocus()) return; /* сайт перед глазами: хватит значка на вкладке */
+    showNote(nameOf(from), String(text || '').slice(0, 120), 'dm-' + from);
+  }
+  $('notif-btn').addEventListener('click', function () {
+    if (!me || !notifSupported()) return;
+    if (notifOn()) { lsSet('notif-' + me.uid, 0); updateNotifUI(); return; }
+    var fired = false, done = function (p) {
+      if (fired) return; fired = true;
+      if (p === 'granted') { lsSet('notif-' + me.uid, 1); showNote('Уведомления включены', 'Вы будете получать новые сообщения.', 'dm-test'); }
+      updateNotifUI();
+    };
+    try { var r = Notification.requestPermission(done); if (r && r.then) r.then(done); } catch (e) { updateNotifUI(); }
+  });
+  if ('serviceWorker' in navigator && /^https:|^http:\/\/localhost/.test(location.href)) { try { navigator.serviceWorker.register('sw.js').catch(noop); } catch (e) {} }
   function renderProfileTab() {
+    updateNotifUI(); fillSettings();
     var box = $('my-profile'); if (!me || !box) return;
     box.textContent = ''; box.appendChild(profileBlock(me.uid));
   }
-  function encodeAvatar(file) {
+  function resizeAvatar(file) {
     return new Promise(function (resolve, reject) {
-      if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { reject(new Error('Выберите фото в формате JPEG, PNG или WebP.')); return; }
-      if (file.size > 5 * 1024 * 1024) { reject(new Error('Размер исходного фото не должен превышать 5 МБ.')); return; }
-      var url = URL.createObjectURL(file), image = new Image();
-      image.onload = function () {
-        URL.revokeObjectURL(url);
-        try {
-          if (!image.naturalWidth || !image.naturalHeight) { reject(new Error('В изображении нет данных.')); return; }
-          var side = 256, scale = Math.min(1, side / Math.max(image.naturalWidth, image.naturalHeight));
-          var canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-          canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-          var context = canvas.getContext('2d');
-          if (!context) { reject(new Error('Браузер не смог обработать изображение.')); return; }
-          context.drawImage(image, 0, 0, canvas.width, canvas.height);
-          var result;
-          for (var quality = 0.82; quality >= 0.34; quality -= 0.12) {
-            result = canvas.toDataURL('image/jpeg', quality);
-            if (result.length <= 150000) { resolve(result); return; }
-          }
-          reject(new Error('Не удалось уменьшить фото до допустимого размера.'));
-        } catch (ex) { reject(ex); }
+      var fr = new FileReader();
+      fr.onerror = function () { reject(new Error('read')); };
+      fr.onload = function () {
+        var img = new Image();
+        img.onerror = function () { reject(new Error('img')); };
+        img.onload = function () {
+          var side = Math.min(img.width, img.height), sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+          var cv = document.createElement('canvas'); cv.width = cv.height = 128;
+          var cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, 128, 128); cx.drawImage(img, sx, sy, side, side, 0, 0, 128, 128);
+          var q = 0.85, out = cv.toDataURL('image/jpeg', q);
+          while (out.length > 28000 && q > 0.3) { q -= 0.15; out = cv.toDataURL('image/jpeg', q); }
+          if (out.indexOf('data:image/jpeg;base64,') !== 0 || out.length > 28000) reject(new Error('big')); else resolve(out);
+        };
+        img.src = fr.result;
       };
-      image.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Не удалось прочитать изображение.')); };
-      image.src = url;
+      fr.readAsDataURL(file);
     });
   }
-  var avatarInput = $('av-input'), avatarRemove = $('av-remove');
-  avatarInput.addEventListener('change', async function () {
-    var file = avatarInput.files && avatarInput.files[0];
-    if (!file) return;
-    var err = $('av-err'), msg = $('av-msg');
-    err.textContent = ''; msg.textContent = 'Обрабатываю фото…';
-    avatarInput.disabled = true; avatarRemove.disabled = true;
+  $('av-input').addEventListener('change', async function () {
+    var f = this.files && this.files[0], msg = $('av-msg'), err = $('av-err'); err.textContent = ''; msg.textContent = '';
+    this.value = ''; if (!f || !me) return;
+    if (!/^image\//.test(f.type)) { err.textContent = 'Выберите картинку (JPG, PNG, WebP).'; return; }
     try {
-      var data = await encodeAvatar(file);
+      var data = await resizeAvatar(f);
       await db.collection('users').doc(me.uid).update({ avatar: data });
-      msg.textContent = 'Фото профиля обновлено.';
-    } catch (ex) {
-      msg.textContent = '';
-      err.textContent = ex && ex.message ? ex.message : dbMsg(ex, 'Не удалось сохранить фото профиля. Проверьте правила Firestore и попробуйте ещё раз.');
-    } finally {
-      avatarInput.value = '';
-      avatarInput.disabled = false; avatarRemove.disabled = false;
-    }
+      msg.textContent = 'Аватар обновлён.';
+    } catch (ex) { err.textContent = dbMsg(ex, 'Не удалось загрузить картинку. Попробуйте другую.') + (ex && ex.code === 'permission-denied' ? ' Возможно, не опубликованы новые правила из firestore.rules.' : ''); }
   });
-  avatarRemove.addEventListener('click', async function () {
-    var err = $('av-err'), msg = $('av-msg');
-    err.textContent = ''; msg.textContent = '';
-    if (!S.users[me.uid] || !S.users[me.uid].avatar) { msg.textContent = 'Фото профиля не задано.'; return; }
-    avatarInput.disabled = true; avatarRemove.disabled = true;
-    try {
-      await db.collection('users').doc(me.uid).update({ avatar: FV.delete() });
-      msg.textContent = 'Фото профиля удалено.';
-    } catch (ex) { err.textContent = dbMsg(ex, 'Не удалось удалить фото профиля. Проверьте правила Firestore и попробуйте ещё раз.'); }
-    finally { avatarInput.disabled = false; avatarRemove.disabled = false; }
+  $('av-remove').addEventListener('click', async function () {
+    var err = $('av-err'), msg = $('av-msg'); err.textContent = ''; msg.textContent = '';
+    try { await db.collection('users').doc(me.uid).update({ avatar: '' }); msg.textContent = 'Аватар убран.'; }
+    catch (ex) { err.textContent = dbMsg(ex, 'Не удалось убрать аватар.'); }
   });
   $('name-form').addEventListener('submit', async function (e) {
     e.preventDefault();
@@ -783,9 +824,155 @@
     $('dm-btn').disabled = false; inp.focus();
   });
 
+  /* ---------- онлайн, статистика, объявление ---------- */
+  function beat() {
+    if (!me || !db || PREFS.hideOnline || document.hidden) return;
+    db.collection('presence').doc(me.uid).set({ ts: FV.serverTimestamp() }).catch(noop);
+  }
+  setInterval(beat, 120000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) beat(); });
+  function onlineSet() {
+    var set = {}, lim = Date.now() - 300000;
+    Object.keys(S.presence).forEach(function (id) { if (S.presence[id] > lim && S.users[id]) set[id] = 1; });
+    if (me) { if (PREFS.hideOnline) delete set[me.uid]; else set[me.uid] = 1; }
+    return set;
+  }
+  function renderStats() {
+    var p = $('stats'); if (!p) return;
+    if (!me || !configured) { p.textContent = ''; return; }
+    p.textContent = 'Онлайн сейчас: ' + Object.keys(onlineSet()).length + ' · Всего зарегистрировано: ' + Object.keys(S.users).length;
+  }
+  setInterval(function () { if (me) { renderStats(); if (S.tab === 'admin') renderAdmin(); } }, 30000);
+  function renderAnn() {
+    var box = $('ann'); if (!box) return;
+    if (!me || !S.ann || lsGet('ann-' + me.uid, 0) === S.ann.ts) { box.hidden = true; return; }
+    box.textContent = ''; box.appendChild(el('span', null, '📢 ' + S.ann.text));
+    var x = el('button', null, '×'); x.type = 'button'; x.setAttribute('aria-label', 'Закрыть объявление');
+    x.onclick = function () { lsSet('ann-' + me.uid, S.ann.ts); box.hidden = true; }; box.appendChild(x);
+    box.hidden = false;
+  }
+
+  /* ---------- панель администратора ---------- */
+  function statBox(num, label) { var d = el('div', 'stat'); d.appendChild(el('b', null, String(num))); d.appendChild(el('span', null, label)); return d; }
+  function admErr(msg) { $('adm-err').textContent = msg || ''; }
+  async function deletePostsOf(id) {
+    var list = S.posts.filter(function (p) { return p.uid === id; });
+    for (var i = 0; i < list.length; i++) await deletePost(list[i]);
+  }
+  function renderAdmin() {
+    if (!me || !isMod()) return;
+    var ids = Object.keys(S.users), now = Date.now(), day0 = new Date(); day0.setHours(0, 0, 0, 0);
+    var on = onlineSet(), reportPosts = {}; S.reports.forEach(function (r) { reportPosts[r.pid] = 1; });
+    var st = $('adm-stats'); st.textContent = '';
+    st.appendChild(statBox(ids.length, 'всего аккаунтов'));
+    st.appendChild(statBox(Object.keys(on).length, 'онлайн сейчас'));
+    st.appendChild(statBox(ids.filter(function (id) { return S.users[id].ts >= now - 86400000; }).length, 'новых за 24 часа'));
+    st.appendChild(statBox(ids.filter(function (id) { return S.users[id].ts >= now - 7 * 86400000; }).length, 'новых за 7 дней'));
+    st.appendChild(statBox(Object.keys(S.verified).length, 'с синей галочкой'));
+    st.appendChild(statBox(Object.keys(S.banned).length, 'заблокировано'));
+    st.appendChild(statBox(S.posts.length, 'постов в ленте'));
+    st.appendChild(statBox(Object.keys(reportPosts).length, 'постов с жалобами'));
+    var ch = $('adm-chart'); ch.textContent = '';
+    var days = [], mx = 1, d;
+    for (d = 6; d >= 0; d--) {
+      var from = day0.getTime() - d * 86400000, to = from + 86400000;
+      var n = ids.filter(function (id) { return S.users[id].ts >= from && S.users[id].ts < to; }).length;
+      mx = Math.max(mx, n); days.push({ label: new Date(from).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }), n: n });
+    }
+    days.forEach(function (x) {
+      var row = el('div', 'bar'), lab = el('span', null, x.label), bar = el('i'); lab.style.minWidth = '52px'; bar.style.width = Math.round(x.n / mx * 70) + '%';
+      row.appendChild(lab); row.appendChild(bar); row.appendChild(el('span', null, String(x.n))); ch.appendChild(row);
+    });
+    var q = $('adm-search').value.trim().toLowerCase();
+    var list = ids.filter(function (id) { return !q || nameOf(id).toLowerCase().indexOf(q) !== -1; });
+    list.sort(function (a, b) { return (S.users[b].ts || 0) - (S.users[a].ts || 0); });
+    var total = list.length; list = list.slice(0, S.admLimit);
+    var box = $('adm-users'); box.textContent = '';
+    if (!list.length) box.appendChild(el('p', 'cmuted', 'Никого не найдено.'));
+    list.forEach(function (id) {
+      var row = el('div', 'urow'), nm = el('span', 'nm');
+      nm.appendChild(avatar(id)); var nb = el('button', 'namebtn', nameOf(id)); nb.type = 'button'; nb.onclick = function () { openProfile(id); }; nm.appendChild(nb);
+      if (isVer(id)) nm.appendChild(badge());
+      if (on[id]) { var dt = el('span', 'dot'); dt.title = 'Онлайн'; nm.appendChild(dt); }
+      if (isBanned(id)) nm.appendChild(el('span', 'tag', 'заблокирован'));
+      row.appendChild(nm);
+      var vb = el('button', 'mini', isVer(id) ? 'Снять галочку' : 'Дать галочку'); vb.type = 'button';
+      vb.onclick = function () { (isVer(id) ? db.collection('verified').doc(id).delete() : db.collection('verified').doc(id).set({ ts: FV.serverTimestamp() })).catch(noop); }; row.appendChild(vb);
+      if (id !== me.uid) {
+        var bb = el('button', 'mini', isBanned(id) ? 'Разблокировать' : 'Заблокировать'); bb.type = 'button';
+        bb.onclick = function () { (isBanned(id) ? db.collection('banned').doc(id).delete() : db.collection('banned').doc(id).set({ ts: FV.serverTimestamp() })).catch(noop); }; row.appendChild(bb);
+      }
+      if (S.users[id].avatar) {
+        var ra = el('button', 'mini', 'Убрать аватар'); ra.type = 'button';
+        ra.onclick = function () { db.collection('users').doc(id).update({ avatar: '' }).catch(function (e) { admErr(dbMsg(e, 'Не удалось убрать аватар. Опубликованы ли новые правила?')); }); }; row.appendChild(ra);
+      }
+      var np = S.posts.filter(function (p) { return p.uid === id; }).length;
+      if (np && id !== me.uid) {
+        var dp = el('button', 'mini', 'Удалить посты (' + np + ')'); dp.type = 'button';
+        sureClick(dp, 'Точно?', function () { deletePostsOf(id); }); row.appendChild(dp);
+      }
+      box.appendChild(row);
+    });
+    if (total > list.length) {
+      var more = el('button', 'cbtn', 'Показать ещё (' + (total - list.length) + ')'); more.type = 'button';
+      more.onclick = function () { S.admLimit += 20; renderAdmin(); }; box.appendChild(more);
+    }
+  }
+  $('adm-search').addEventListener('input', function () { S.admLimit = 20; renderAdmin(); });
+  $('ann-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var t = $('ann-text').value.trim(), err = $('ann-err'); err.textContent = '';
+    if (!t) { err.textContent = 'Введите текст объявления.'; return; }
+    try { await db.collection('settings').doc('announcement').set({ text: t, ts: FV.serverTimestamp() }); $('ann-text').value = ''; err.style.color = 'var(--muted)'; err.textContent = 'Опубликовано.'; }
+    catch (ex) { err.style.color = ''; err.textContent = dbMsg(ex, 'Не удалось опубликовать. Опубликуйте новые правила из firestore.rules.'); }
+  });
+  $('ann-clear').addEventListener('click', async function () {
+    var err = $('ann-err'); err.style.color = ''; err.textContent = '';
+    try { await db.collection('settings').doc('announcement').delete(); err.style.color = 'var(--muted)'; err.textContent = 'Объявление убрано.'; }
+    catch (ex) { err.textContent = dbMsg(ex, 'Не удалось убрать объявление.'); }
+  });
+  $('adm-clear-reports').addEventListener('click', async function () {
+    admErr('');
+    if (!S.reports.length) { admErr('Жалоб нет.'); return; }
+    try { var b = db.batch(); S.reports.slice(0, 450).forEach(function (r) { b.delete(db.collection('reports').doc(r.id)); }); await b.commit(); }
+    catch (ex) { admErr(dbMsg(ex, 'Не удалось закрыть жалобы.')); }
+  });
+
+  /* ---------- настройки: о себе, оформление, приватность ---------- */
+  $('bio-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var t = $('bio-input').value.trim(), err = $('bio-err'), msg = $('bio-msg'); err.textContent = ''; msg.textContent = '';
+    if (hasBadWord(t)) { err.textContent = BAD_MSG; return; }
+    try { await db.collection('users').doc(me.uid).update({ bio: t }); msg.textContent = 'Сохранено.'; }
+    catch (ex) { err.textContent = dbMsg(ex, 'Не удалось сохранить. Опубликуйте новые правила из firestore.rules.'); }
+  });
+  $('set-theme').addEventListener('change', function () { PREFS.theme = this.value; lsSet('prefs', PREFS); applyPrefs(); });
+  $('set-size').addEventListener('change', function () { PREFS.size = this.value; lsSet('prefs', PREFS); applyPrefs(); });
+  $('set-hide').addEventListener('change', function () {
+    PREFS.hideOnline = this.checked; lsSet('prefs', PREFS);
+    if (me && db) { if (PREFS.hideOnline) db.collection('presence').doc(me.uid).delete().catch(noop); else beat(); }
+    renderStats();
+  });
+  $('set-pass').addEventListener('click', async function () {
+    var m = $('set-msg'); m.textContent = '';
+    try { await auth.sendPasswordResetEmail(me.email); m.textContent = 'Письмо для смены пароля отправлено на ' + me.email + '.'; }
+    catch (ex) { m.textContent = authMsg(ex); }
+  });
+  $('set-clear').addEventListener('click', function () {
+    if (!me) return;
+    S.saved = {}; lsSet('saved-' + me.uid, {}); lsSet('draft-' + me.uid, ''); lsSet('rep-' + me.uid, {}); S.reported = {};
+    postText.value = ''; $('post-left').textContent = '500'; $('set-msg').textContent = 'Сохранённые посты и черновик очищены.'; renderFeed();
+  });
+  function fillSettings() {
+    $('set-theme').value = PREFS.theme === 'light' ? 'light' : 'dark';
+    $('set-size').value = PREFS.size === 'large' ? 'large' : 'normal';
+    $('set-hide').checked = !!PREFS.hideOnline;
+    var bi = $('bio-input'); if (me && document.activeElement !== bi) bi.value = (S.users[me.uid] && S.users[me.uid].bio) || '';
+  }
+
   function renderAll() {
-    renderAccounts(); setStatus();
-    if (me && configured) { renderFeed(); renderMod(); renderContacts(); renderThread(); updateBadges(); if (S.tab === 'profile') renderProfileTab(); }
+    renderAccounts(); setStatus(); renderStats();
+    if (me && configured) { renderFeed(); renderMod(); renderContacts(); renderThread(); updateBadges(); if (S.tab === 'profile') renderProfileTab(); if (S.tab === 'admin') renderAdmin(); renderAnn(); }
   }
   renderAccounts();
 })();

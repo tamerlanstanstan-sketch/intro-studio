@@ -35,10 +35,12 @@
   <div class="setup" id="setup" hidden></div>
   <h2 class="sh">Сообщество</h2>
   <section class="community" id="community" aria-label="Сообщество" hidden>
+    <div class="ann" id="ann" role="status" hidden></div>
     <div class="tabs" role="tablist" id="tabs">
       <button type="button" role="tab" data-tab="feed" aria-selected="true">Лента</button>
       <button type="button" role="tab" data-tab="dm" aria-selected="false">Сообщения <span id="dm-count"></span></button>
       <button type="button" role="tab" data-tab="profile" aria-selected="false">Профиль</button>
+      <button type="button" role="tab" data-tab="admin" id="tab-admin" aria-selected="false" hidden>Админ</button>
       <button type="button" role="tab" data-tab="mod" id="tab-mod" aria-selected="false" hidden>Жалобы <span id="mod-count"></span></button>
     </div>
     <div id="pane-feed">
@@ -75,11 +77,38 @@
         <span class="cmuted">Аватар</span>
         <div class="crow">
           <label class="cbtn primary filebtn" for="av-input">Загрузить фото</label>
-          <input type="file" id="av-input" accept="image/jpeg,image/png,image/webp" hidden>
+          <input type="file" id="av-input" accept="image/*" hidden>
           <button type="button" class="cbtn" id="av-remove">Убрать фото</button>
         </div>
         <span class="cmuted" id="av-msg"></span>
         <p class="cerr" id="av-err" role="alert"></p>
+      </div>
+      <div class="avset">
+        <span class="cmuted">Уведомления о сообщениях</span>
+        <div class="crow"><button type="button" class="cbtn primary" id="notif-btn">Включить уведомления</button></div>
+        <span class="cmuted" id="notif-msg"></span>
+      </div>
+      <form id="bio-form" class="avset" novalidate>
+        <label for="bio-input" class="cmuted">О себе (до 120 символов)</label>
+        <textarea id="bio-input" maxlength="120" rows="2" placeholder="Расскажите о себе"></textarea>
+        <div class="crow"><span class="cmuted" id="bio-msg"></span><button type="submit" class="cbtn primary">Сохранить</button></div>
+        <p class="cerr" id="bio-err" role="alert"></p>
+      </form>
+      <div class="avset">
+        <span class="cmuted">Оформление (хранится в этом браузере)</span>
+        <div class="crow">
+          <select id="set-theme" aria-label="Тема"><option value="dark">Тёмная тема</option><option value="light">Светлая тема</option></select>
+          <select id="set-size" aria-label="Размер текста"><option value="normal">Обычный текст</option><option value="large">Крупный текст</option></select>
+        </div>
+      </div>
+      <div class="avset">
+        <span class="cmuted">Приватность и безопасность</span>
+        <label class="chk" for="set-hide"><input type="checkbox" id="set-hide"> Не показывать, что я онлайн</label>
+        <div class="crow">
+          <button type="button" class="cbtn" id="set-pass">Сменить пароль (письмо на почту)</button>
+          <button type="button" class="cbtn" id="set-clear">Очистить сохранённое и черновики</button>
+        </div>
+        <span class="cmuted" id="set-msg"></span>
       </div>
       <form id="name-form" novalidate>
         <label for="name-input" class="cmuted">Имя</label>
@@ -88,12 +117,32 @@
         <p class="cerr" id="name-err" role="alert"></p>
       </form>
     </div>
+    <div id="pane-admin" hidden>
+      <p class="cmuted">Панель администратора: видна только вам.</p>
+      <h3 class="sh2">Статистика</h3>
+      <div class="stats-grid" id="adm-stats"></div>
+      <h3 class="sh2">Регистрации за 7 дней</h3>
+      <div id="adm-chart" class="chart"></div>
+      <h3 class="sh2">Объявление для всех</h3>
+      <form id="ann-form" novalidate>
+        <textarea id="ann-text" maxlength="300" rows="2" placeholder="Текст объявления (до 300 символов)"></textarea>
+        <div class="crow"><button type="button" class="cbtn" id="ann-clear">Убрать объявление</button><button type="submit" class="cbtn primary">Опубликовать</button></div>
+        <p class="cerr" id="ann-err" role="alert"></p>
+      </form>
+      <h3 class="sh2">Пользователи</h3>
+      <input type="search" id="adm-search" class="dmsearch" maxlength="30" autocomplete="off" placeholder="Найти пользователя по имени" aria-label="Найти пользователя по имени">
+      <div id="adm-users"></div>
+      <h3 class="sh2">Прочее</h3>
+      <div class="crow"><button type="button" class="cbtn danger" id="adm-clear-reports">Закрыть все жалобы</button></div>
+      <p class="cerr" id="adm-err" role="alert"></p>
+    </div>
     <div id="pane-mod" hidden><p class="cmuted">Режим модератора: жалобы видите только вы.</p><div id="reports"></div></div>
   </section>
   <p class="note" id="comm-lock">Лента и личные сообщения откроются после входа в аккаунт.</p>
   <section class="accounts" aria-label="Аккаунты">
     <h3>Аккаунты <span id="acc-count"></span></h3>
     <input type="search" id="acc-search" class="dmsearch" maxlength="30" autocomplete="off" placeholder="Найти аккаунт по имени" aria-label="Найти аккаунт по имени" hidden>
+    <p class="cmuted" id="stats"></p>
     <ul class="acc-list" id="acc-list"><li class="empty">Загрузка…</li></ul>
   </section>
   <div class="banned" id="banned" role="alertdialog" aria-live="assertive" hidden><p>Вы заблокированы</p></div>
